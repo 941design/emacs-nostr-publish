@@ -1,0 +1,72 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+"
+      - "v[0-9]+.[0-9]+.[0-9]+-*"
+
+jobs:
+  test:
+    name: Test before release
+    uses: ./.github/workflows/test.yml
+
+  release:
+    name: Create GitHub Release
+    needs: test
+    runs-on: ubuntu-latest
+    if: github.ref_type == 'tag'
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Extract version from tag
+        id: version
+        run: echo "version=${GITHUB_REF_NAME#v}" >> $GITHUB_OUTPUT
+
+      - name: Verify version consistency
+        run: |
+          # Check pyproject.toml version
+          PY_VERSION=$(grep -oP '(?<=^version = ")[^"]+' pyproject.toml)
+          # Check elisp version
+          EL_VERSION=$(grep -oP '(?<=;; Version: )[0-9.]+' nostr-publish.el)
+
+          TAG_VERSION="${{ steps.version.outputs.version }}"
+
+          echo "Tag version: $TAG_VERSION"
+          echo "Python version: $PY_VERSION"
+          echo "Elisp version: $EL_VERSION"
+
+          if [ "$PY_VERSION" != "$TAG_VERSION" ]; then
+            echo "::warning::Python version ($PY_VERSION) does not match tag ($TAG_VERSION)"
+          fi
+          if [ "$EL_VERSION" != "$TAG_VERSION" ]; then
+            echo "::warning::Elisp version ($EL_VERSION) does not match tag ($TAG_VERSION)"
+          fi
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          draft: false
+          prerelease: ${{ contains(github.ref_name, '-') }}
+
+  pypi:
+    name: Publish to PyPI
+    needs: release
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write  # Required for trusted publishing
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Build package
+        run: uv build
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1

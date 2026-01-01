@@ -1,0 +1,25 @@
+#!/bin/sh
+# Pre-commit hook: runs linting, format checks, and formats markdown tables
+# Install with: make install-hooks
+
+set -e
+
+echo "Running pre-commit checks..."
+
+echo "Checking ruff lint..."
+uv run ruff check src/ tests/
+
+echo "Checking ruff format..."
+uv run ruff format --check src/ tests/
+
+# Get list of staged markdown files
+STAGED_MD=$(git diff --cached --name-only --diff-filter=ACM | grep '\.md$' || true)
+
+if [ -n "$STAGED_MD" ]; then
+    echo "Formatting markdown tables..."
+    echo "$STAGED_MD" | xargs npx markdown-table-formatter
+    echo "$STAGED_MD" | xargs git add
+    echo "Markdown formatting complete."
+fi
+
+echo "All pre-commit checks passed!"

@@ -1,0 +1,12 @@
+#!/bin/sh
+# Pre-push hook: runs unit tests before push
+# Install with: make install-hooks
+
+set -e
+
+echo "Running pre-push checks..."
+
+echo "Running unit tests..."
+uv run pytest tests/unit/ -v
+
+echo "All pre-push checks passed!"

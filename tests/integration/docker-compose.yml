@@ -1,0 +1,32 @@
+services:
+  relay:
+    image: scsibug/nostr-rs-relay:latest
+    ports:
+      - "8081:8080"
+    volumes:
+      - ./relay-config.toml:/usr/src/app/config.toml:ro
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c 'echo > /dev/tcp/localhost/8080'"]
+      interval: 2s
+      timeout: 2s
+      retries: 10
+
+  bunker:
+    build:
+      context: ./nak
+      dockerfile: Dockerfile
+    command:
+      - bunker
+      - "--sec"
+      - "0000000000000000000000000000000000000000000000000000000000000001"
+      - "--authorized-keys"
+      - "c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5"
+      - "ws://relay:8080"
+    depends_on:
+      relay:
+        condition: service_healthy
+    restart: on-failure
+
+networks:
+  default:
+    name: nostr-publish-test

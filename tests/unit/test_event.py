@@ -1,0 +1,291 @@
+"""Unit tests for event construction.
+
+Property-based tests for construct_event and build_tags functions.
+"""
+
+from hypothesis import HealthCheck, assume, given, settings
+from hypothesis import strategies as st
+
+from nostr_publish.event import build_tags, construct_event
+from nostr_publish.models import Frontmatter, UnsignedEvent
+
+
+@st.composite
+def frontmatter_strategy(draw):
+    """Generate valid Frontmatter instances."""
+    return Frontmatter(
+        title=draw(st.text(min_size=1)),
+        slug=draw(st.text(min_size=1)),
+        summary=draw(st.one_of(st.none(), st.text())),
+        published_at=draw(st.one_of(st.none(), st.integers(min_value=0))),
+        tags=draw(st.lists(st.text(min_size=1), unique=True)),
+        relays=[],
+    )
+
+
+class TestBuildTagsOrdering:
+    """Property tests for tag ordering invariants."""
+
+    @given(frontmatter_strategy())
+    def test_first_tag_is_d_slug(self, frontmatter):
+        """First tag must be ["d", slug]."""
+        tags = build_tags(frontmatter)
+        assert len(tags) >= 1
+        assert tags[0] == ["d", frontmatter.slug]
+
+    @given(frontmatter_strategy())
+    def test_second_tag_is_title(self, frontmatter):
+        """Second tag must be ["title", title]."""
+        tags = build_tags(frontmatter)
+        assert len(tags) >= 2
+        assert tags[1] == ["title", frontmatter.title]
+
+    @given(frontmatter_strategy())
+    def test_summary_tag_position(self, frontmatter):
+        """Summary tag (when present) appears after title, before published_at."""
+        assume(frontmatter.summary is not None)
+        tags = build_tags(frontmatter)
+        summary_idx = next(i for i, tag in enumerate(tags) if tag[0] == "summary")
+        assert summary_idx > 1
+        if any(tag[0] == "published_at" for tag in tags):
+            published_idx = next(i for i, tag in enumerate(tags) if tag[0] == "published_at")
+            assert summary_idx < published_idx
+
+    @given(frontmatter_strategy())
+    def test_published_at_before_content_tags(self, frontmatter):
+        """published_at tag (when present) appears before any t tags."""
+        assume(frontmatter.published_at is not None and len(frontmatter.tags) > 0)
+        tags = build_tags(frontmatter)
+        published_idx = next(i for i, tag in enumerate(tags) if tag[0] == "published_at")
+        content_indices = [i for i, tag in enumerate(tags) if tag[0] == "t"]
+        assert all(published_idx < ci for ci in content_indices)
+
+    @given(frontmatter_strategy())
+    def test_content_tags_sorted_lexicographically(self, frontmatter):
+        """Content tags (["t", ...]) must be sorted lexicographically."""
+        tags = build_tags(frontmatter)
+        content_tags = [tag[1] for tag in tags if tag[0] == "t"]
+        assert content_tags == sorted(content_tags)
+
+    @given(frontmatter_strategy())
+    def test_no_extra_tags(self, frontmatter):
+        """Only d, title, summary, published_at, and t tags are allowed."""
+        tags = build_tags(frontmatter)
+        allowed_names = {"d", "title", "summary", "published_at", "t"}
+        for tag in tags:
+            assert tag[0] in allowed_names
+
+
+class TestBuildTagsDeterminism:
+    """Property tests for deterministic behavior."""
+
+    @given(frontmatter_strategy())
+    def test_same_frontmatter_same_tags(self, frontmatter):
+        """Same frontmatter always produces same tags."""
+        tags1 = build_tags(frontmatter)
+        tags2 = build_tags(frontmatter)
+        assert tags1 == tags2
+
+    @given(st.lists(st.text(min_size=1, max_size=50), unique=True, min_size=0, max_size=10))
+    def test_tag_list_order_does_not_affect_output(self, tag_list):
+        """Different input tag orderings produce identical output."""
+        if len(tag_list) < 2:
+            return
+        frontmatter1 = Frontmatter(title="Test", slug="test-slug", tags=tag_list)
+        frontmatter2 = Frontmatter(title="Test", slug="test-slug", tags=list(reversed(tag_list)))
+        tags1 = build_tags(frontmatter1)
+        tags2 = build_tags(frontmatter2)
+        assert tags1 == tags2
+
+
+class TestBuildTagsCompleteness:
+    """Property tests for complete representation of frontmatter."""
+
+    @given(frontmatter_strategy())
+    def test_slug_in_tags(self, frontmatter):
+        """Slug must be represented in tags."""
+        tags = build_tags(frontmatter)
+        assert any(tag == ["d", frontmatter.slug] for tag in tags)
+
+    @given(frontmatter_strategy())
+    def test_title_in_tags(self, frontmatter):
+        """Title must be represented in tags."""
+        tags = build_tags(frontmatter)
+        assert any(tag == ["title", frontmatter.title] for tag in tags)
+
+    @given(frontmatter_strategy())
+    def test_summary_in_tags_when_present(self, frontmatter):
+        """Summary must be in tags if present."""
+        assume(frontmatter.summary is not None)
+        tags = build_tags(frontmatter)
+        assert any(tag == ["summary", frontmatter.summary] for tag in tags)
+
+    @given(frontmatter_strategy())
+    def test_summary_not_in_tags_when_absent(self, frontmatter):
+        """Summary must not be in tags if absent."""
+        assume(frontmatter.summary is None)
+        tags = build_tags(frontmatter)
+        assert not any(tag[0] == "summary" for tag in tags)
+
+    @given(frontmatter_strategy())
+    def test_published_at_in_tags_when_present(self, frontmatter):
+        """published_at must be in tags if present."""
+        assume(frontmatter.published_at is not None)
+        tags = build_tags(frontmatter)
+        assert any(tag == ["published_at", str(frontmatter.published_at)] for tag in tags)
+
+    @given(frontmatter_strategy())
+    def test_published_at_not_in_tags_when_absent(self, frontmatter):
+        """published_at must not be in tags if absent."""
+        assume(frontmatter.published_at is None)
+        tags = build_tags(frontmatter)
+        assert not any(tag[0] == "published_at" for tag in tags)
+
+    @given(frontmatter_strategy())
+    def test_all_content_tags_present(self, frontmatter):
+        """All frontmatter tags must be represented as ["t", tag]."""
+        tags = build_tags(frontmatter)
+        content_tags = {tag[1] for tag in tags if tag[0] == "t"}
+        assert content_tags == set(frontmatter.tags)
+
+    @given(frontmatter_strategy())
+    def test_tag_count_correct(self, frontmatter):
+        """Tag count must match formula: 2 + (summary?1:0) + (published_at?1:0) + len(tags)."""
+        tags = build_tags(frontmatter)
+        expected_count = 2
+        if frontmatter.summary is not None:
+            expected_count += 1
+        if frontmatter.published_at is not None:
+            expected_count += 1
+        expected_count += len(frontmatter.tags)
+        assert len(tags) == expected_count
+
+
+class TestConstructEvent:
+    """Property tests for construct_event function."""
+
+    @given(frontmatter_strategy(), st.text())
+    def test_kind_is_30023(self, frontmatter, body):
+        """Event kind must always be 30023."""
+        event = construct_event(frontmatter, body)
+        assert event.kind == 30023
+
+    @given(frontmatter_strategy(), st.text())
+    def test_content_equals_body(self, frontmatter, body):
+        """Event content must equal the provided body exactly."""
+        event = construct_event(frontmatter, body)
+        assert event.content == body
+
+    @given(frontmatter_strategy(), st.text())
+    def test_tags_from_build_tags(self, frontmatter, body):
+        """Event tags must match build_tags output."""
+        event = construct_event(frontmatter, body)
+        expected_tags = build_tags(frontmatter)
+        assert event.tags == expected_tags
+
+    @given(frontmatter_strategy(), st.text())
+    def test_event_is_unsigned_event(self, frontmatter, body):
+        """construct_event must return UnsignedEvent instance."""
+        event = construct_event(frontmatter, body)
+        assert isinstance(event, UnsignedEvent)
+
+    @given(frontmatter_strategy(), st.text())
+    def test_event_deterministic(self, frontmatter, body):
+        """Same inputs always produce identical events."""
+        event1 = construct_event(frontmatter, body)
+        event2 = construct_event(frontmatter, body)
+        assert event1.kind == event2.kind
+        assert event1.content == event2.content
+        assert event1.tags == event2.tags
+
+    @given(frontmatter_strategy(), st.text())
+    def test_event_tags_are_lists(self, frontmatter, body):
+        """Each tag in event must be a list."""
+        event = construct_event(frontmatter, body)
+        for tag in event.tags:
+            assert isinstance(tag, list)
+
+    @given(frontmatter_strategy(), st.text())
+    def test_event_tags_have_at_least_two_elements(self, frontmatter, body):
+        """Each tag must have at least [tag_name, tag_value]."""
+        event = construct_event(frontmatter, body)
+        for tag in event.tags:
+            assert len(tag) >= 2
+
+
+class TestEdgeCases:
+    """Example-based tests for edge cases and boundary conditions."""
+
+    @settings(suppress_health_check=[HealthCheck.filter_too_much])
+    @given(frontmatter_strategy())
+    def test_empty_tags_list(self, frontmatter):
+        """Frontmatter with no tags should have correct tag count."""
+        assume(len(frontmatter.tags) == 0)
+        tags = build_tags(frontmatter)
+        expected_count = 2
+        if frontmatter.summary is not None:
+            expected_count += 1
+        if frontmatter.published_at is not None:
+            expected_count += 1
+        assert len(tags) == expected_count
+
+    def test_zero_published_at(self):
+        """published_at of 0 (Unix epoch) should be represented correctly."""
+        frontmatter = Frontmatter(title="Test", slug="test", published_at=0)
+        tags = build_tags(frontmatter)
+        assert ["published_at", "0"] in tags
+
+    @given(st.integers(min_value=0, max_value=10**10))
+    def test_large_published_at(self, timestamp):
+        """Large timestamps should be converted to string correctly."""
+        frontmatter = Frontmatter(title="Test", slug="test", published_at=timestamp)
+        tags = build_tags(frontmatter)
+        assert ["published_at", str(timestamp)] in tags
+
+    def test_minimal_frontmatter(self):
+        """Minimal frontmatter (only required fields) should work."""
+        frontmatter = Frontmatter(title="Test Title", slug="test-slug")
+        tags = build_tags(frontmatter)
+        assert len(tags) == 2
+        assert tags[0] == ["d", "test-slug"]
+        assert tags[1] == ["title", "Test Title"]
+
+    def test_full_frontmatter(self):
+        """Frontmatter with all fields should include all tags."""
+        frontmatter = Frontmatter(
+            title="Test Title", slug="test-slug", summary="A summary", published_at=1700000000, tags=["tag1", "tag2"]
+        )
+        tags = build_tags(frontmatter)
+        assert len(tags) == 6
+        assert tags[0] == ["d", "test-slug"]
+        assert tags[1] == ["title", "Test Title"]
+        assert tags[2] == ["summary", "A summary"]
+        assert tags[3] == ["published_at", "1700000000"]
+        assert tags[4] == ["t", "tag1"]
+        assert tags[5] == ["t", "tag2"]
+
+    def test_body_with_special_characters(self):
+        """Body with special characters should be preserved exactly."""
+        special_body = "# Heading\n\nContent with 🎉 emoji and special chars: <>&\"'"
+        frontmatter = Frontmatter(title="Test", slug="test")
+        event = construct_event(frontmatter, special_body)
+        assert event.content == special_body
+
+    def test_empty_body(self):
+        """Empty body should be preserved."""
+        frontmatter = Frontmatter(title="Test", slug="test")
+        event = construct_event(frontmatter, "")
+        assert event.content == ""
+
+    def test_single_tag(self):
+        """Single tag should be preserved."""
+        frontmatter = Frontmatter(title="Test", slug="test", tags=["single"])
+        tags = build_tags(frontmatter)
+        assert ["t", "single"] in tags
+
+    def test_case_sensitive_tag_sorting(self):
+        """Tags should be sorted case-sensitively (ASCII order)."""
+        frontmatter = Frontmatter(title="Test", slug="test", tags=["Zebra", "apple", "Banana"])
+        tags = build_tags(frontmatter)
+        content_tags = [tag[1] for tag in tags if tag[0] == "t"]
+        assert content_tags == ["Banana", "Zebra", "apple"]
