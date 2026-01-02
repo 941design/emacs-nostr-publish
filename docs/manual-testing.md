@@ -51,6 +51,9 @@ Minimal setup:
 (add-to-list 'load-path "/path/to/nostr-publish")
 (require 'nostr-publish)
 
+;; Enable nostr-publish-mode in markdown buffers (activates C-c C-p binding)
+(add-hook 'markdown-mode-hook #'nostr-publish-mode)
+
 (setenv "NOSTR_CLIENT_KEY" "0000000000000000000000000000000000000000000000000000000000000002")
 (setq nostr-publish-bunker-uri
       "bunker://79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798?relay=ws%3A%2F%2Flocalhost%3A8081")

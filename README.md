@@ -100,6 +100,7 @@ Basic setup with `use-package`:
 ```elisp
 (use-package nostr-publish
   :ensure t
+  :hook (markdown-mode . nostr-publish-mode)
   :custom
   (nostr-publish-bunker-uri "bunker://pubkey?relay=wss://relay.example.com")
   (nostr-publish-default-relays '("wss://relay1.example.com" "wss://relay2.example.com"))
@@ -109,6 +110,9 @@ Basic setup with `use-package`:
 Or configure variables directly:
 
 ```elisp
+;; Enable nostr-publish-mode in markdown buffers (activates C-c C-p binding)
+(add-hook 'markdown-mode-hook #'nostr-publish-mode)
+
 ;; Required: bunker URI for signing
 (setq nostr-publish-bunker-uri "bunker://pubkey?relay=wss://relay.example.com")
 
@@ -119,6 +123,8 @@ Or configure variables directly:
 ;; Optional: signing timeout (seconds, default 30)
 (setq nostr-publish-timeout 60)
 ```
+
+> **Note**: The `:hook` (or `add-hook`) is required to enable `nostr-publish-mode`, which provides the `C-c C-p` keybinding. This minor mode binding takes precedence over markdown-mode's default `C-c C-p`.
 
 **Directory-local configuration** for project-specific settings (`.dir-locals.el`):
 

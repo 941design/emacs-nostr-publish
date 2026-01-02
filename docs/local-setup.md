@@ -102,6 +102,9 @@ Configure Emacs to use your local checkout:
 (add-to-list 'load-path "/path/to/emacs-nostr-publish")
 (require 'nostr-publish)
 
+;; Enable nostr-publish-mode in markdown buffers (activates C-c C-p binding)
+(add-hook 'markdown-mode-hook #'nostr-publish-mode)
+
 ;; Configure for local test stack
 (setq nostr-publish-bunker-uri
       "bunker://79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798?relay=ws%3A%2F%2Flocalhost%3A8081")
@@ -117,6 +120,7 @@ Or with `use-package`:
 ```elisp
 (use-package nostr-publish
   :load-path "/path/to/emacs-nostr-publish"
+  :hook (markdown-mode . nostr-publish-mode)
   :init
   (setenv "NOSTR_CLIENT_KEY" "0000000000000000000000000000000000000000000000000000000000000002")
   :custom
