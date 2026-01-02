@@ -1,17 +1,20 @@
-FROM alpine:3.19
+FROM debian:bookworm-slim
 
 ARG NAK_VERSION=0.17.4
-ARG TARGETARCH
 
-RUN apk add --no-cache curl ca-certificates && \
-    ARCH=$(case ${TARGETARCH} in \
-      amd64) echo "amd64" ;; \
-      arm64) echo "arm64" ;; \
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends curl ca-certificates && \
+    ARCH=$(case $(uname -m) in \
+      x86_64) echo "amd64" ;; \
+      aarch64) echo "arm64" ;; \
       *) echo "amd64" ;; \
     esac) && \
-    curl -L "https://github.com/fiatjaf/nak/releases/download/v${NAK_VERSION}/nak-v${NAK_VERSION}-linux-${ARCH}" \
+    curl -fL "https://github.com/fiatjaf/nak/releases/download/v${NAK_VERSION}/nak-v${NAK_VERSION}-linux-${ARCH}" \
       -o /usr/local/bin/nak && \
     chmod +x /usr/local/bin/nak && \
-    apk del curl
+    /usr/local/bin/nak --version && \
+    apt-get purge -y curl && \
+    apt-get autoremove -y && \
+    rm -rf /var/lib/apt/lists/*
 
 ENTRYPOINT ["/usr/local/bin/nak"]

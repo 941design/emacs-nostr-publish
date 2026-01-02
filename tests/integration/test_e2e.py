@@ -71,83 +71,121 @@ def docker_services():
 
     Provides relay and nak bunker services for end-to-end testing.
     The nak bunker acts as a NIP-46 remote signer, communicating via the relay.
-    Ensures services are healthy before tests run.
-    Cleans up services after all tests complete.
+    Detects if services are already running (e.g., started by CI) and skips restart.
+    Ensures bunker is healthy before tests run.
+    Only cleans up services if this fixture started them.
     """
-    if not shutil.which("docker-compose") and not shutil.which("docker"):
+    if not shutil.which("docker"):
         pytest.fail("Docker not available")
 
     if not shutil.which("nak"):
         pytest.fail("nak not available")
 
     compose_dir = DOCKER_COMPOSE_FILE.parent
+    we_started_services = False
 
-    try:
-        subprocess.run(
-            ["docker-compose", "-f", str(DOCKER_COMPOSE_FILE), "down", "-v"],
-            cwd=compose_dir,
-            capture_output=True,
-            timeout=30,
-        )
-    except (subprocess.TimeoutExpired, FileNotFoundError):
-        pass
-
-    try:
-        result = subprocess.run(
-            ["docker-compose", "-f", str(DOCKER_COMPOSE_FILE), "up", "-d"],
-            cwd=compose_dir,
-            capture_output=True,
-            text=True,
-            timeout=60,
-        )
-        if result.returncode != 0:
-            pytest.fail(f"Failed to start Docker services: {result.stderr}")
-    except subprocess.TimeoutExpired:
-        pytest.fail("Docker Compose startup timed out")
-    except FileNotFoundError:
-        pytest.fail("docker-compose not found")
-
-    deadline = time.time() + STARTUP_TIMEOUT
-    relay_healthy = False
-
-    while time.time() < deadline:
+    def services_running():
+        """Check if both relay and bunker containers are running."""
         try:
-            health_check = subprocess.run(
-                ["docker-compose", "-f", str(DOCKER_COMPOSE_FILE), "ps"],
+            result = subprocess.run(
+                ["docker", "compose", "-f", str(DOCKER_COMPOSE_FILE), "ps", "--format", "json"],
                 cwd=compose_dir,
                 capture_output=True,
                 text=True,
                 timeout=5,
             )
-            if "Up" in health_check.stdout:
-                relay_healthy = True
-                break
-        except (subprocess.TimeoutExpired, Exception):
-            pass
-        time.sleep(2)
+            if result.returncode == 0 and result.stdout.strip():
+                # Check that both services are running
+                import json
 
-    if not relay_healthy:
-        try:
-            subprocess.run(
-                ["docker-compose", "-f", str(DOCKER_COMPOSE_FILE), "down", "-v"], cwd=compose_dir, timeout=30
-            )
+                services = [json.loads(line) for line in result.stdout.strip().split("\n") if line]
+                running = {s.get("Service") for s in services if s.get("State") == "running"}
+                return "relay" in running and "bunker" in running
         except Exception:
             pass
-        pytest.fail("Docker services failed to become healthy")
+        return False
 
-    time.sleep(5)
+    def bunker_healthy():
+        """Check if bunker is ready by looking for 'listening at' in logs."""
+        try:
+            result = subprocess.run(
+                ["docker", "compose", "-f", str(DOCKER_COMPOSE_FILE), "logs", "bunker"],
+                cwd=compose_dir,
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            return "listening at" in result.stdout or "listening at" in result.stderr
+        except Exception:
+            return False
+
+    # Check if services are already running (e.g., started by CI)
+    if not services_running():
+        we_started_services = True
+
+        # Clean up any stale containers
+        try:
+            subprocess.run(
+                ["docker", "compose", "-f", str(DOCKER_COMPOSE_FILE), "down", "-v"],
+                cwd=compose_dir,
+                capture_output=True,
+                timeout=30,
+            )
+        except (subprocess.TimeoutExpired, FileNotFoundError):
+            pass
+
+        # Start services
+        try:
+            result = subprocess.run(
+                ["docker", "compose", "-f", str(DOCKER_COMPOSE_FILE), "up", "-d"],
+                cwd=compose_dir,
+                capture_output=True,
+                text=True,
+                timeout=60,
+            )
+            if result.returncode != 0:
+                pytest.fail(f"Failed to start Docker services: {result.stderr}")
+        except subprocess.TimeoutExpired:
+            pytest.fail("Docker Compose startup timed out")
+        except FileNotFoundError:
+            pytest.fail("docker not found")
+
+    # Wait for bunker to be healthy (not just relay)
+    deadline = time.time() + STARTUP_TIMEOUT
+    while time.time() < deadline:
+        if bunker_healthy():
+            break
+        time.sleep(2)
+    else:
+        # Timeout - get logs for debugging
+        try:
+            logs = subprocess.run(
+                ["docker", "compose", "-f", str(DOCKER_COMPOSE_FILE), "logs"],
+                cwd=compose_dir,
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            pytest.fail(f"Bunker failed to become healthy. Logs:\n{logs.stdout}\n{logs.stderr}")
+        except Exception:
+            pytest.fail("Bunker failed to become healthy (could not get logs)")
+
+    # Give bunker a moment to fully initialize after "listening at" appears
+    time.sleep(2)
 
     yield
 
-    try:
-        subprocess.run(
-            ["docker-compose", "-f", str(DOCKER_COMPOSE_FILE), "down", "-v"],
-            cwd=compose_dir,
-            capture_output=True,
-            timeout=30,
-        )
-    except Exception:
-        pass
+    # Only tear down if we started the services
+    if we_started_services:
+        try:
+            subprocess.run(
+                ["docker", "compose", "-f", str(DOCKER_COMPOSE_FILE), "down", "-v"],
+                cwd=compose_dir,
+                capture_output=True,
+                timeout=30,
+            )
+        except Exception:
+            pass
 
 
 def run_nostr_publish(

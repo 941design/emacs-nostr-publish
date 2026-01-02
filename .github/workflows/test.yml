@@ -5,6 +5,7 @@ on:
     branches: ["**"]
   pull_request:
     branches: [master]
+  workflow_call:
 
 jobs:
   lint:
@@ -102,9 +103,14 @@ jobs:
       - name: Install dependencies
         run: uv sync --extra dev
 
+      - name: Set up Emacs
+        uses: purcell/setup-emacs@master
+        with:
+          version: 29.4
+
       - name: Install nak
         run: |
-          curl -L https://github.com/fiatjaf/nak/releases/latest/download/nak-linux-amd64 -o /usr/local/bin/nak
+          curl -L "https://github.com/fiatjaf/nak/releases/download/v0.17.4/nak-v0.17.4-linux-amd64" -o /usr/local/bin/nak
           chmod +x /usr/local/bin/nak
           nak --version
 
@@ -112,9 +118,16 @@ jobs:
         working-directory: tests/integration
         run: |
           docker compose up -d
-          # Wait for services to be healthy
+          # Wait for bunker to be ready (not just relay)
+          for i in {1..30}; do
+            if docker compose logs bunker 2>&1 | grep -q "listening at"; then
+              echo "Bunker is ready"
+              break
+            fi
+            echo "Waiting for bunker... ($i/30)"
+            sleep 2
+          done
           docker compose ps
-          sleep 10
 
       - name: Run integration tests
         run: uv run pytest tests/integration/ -v --tb=short

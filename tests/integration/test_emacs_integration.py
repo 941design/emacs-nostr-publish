@@ -48,7 +48,7 @@ BUNKER_URI = f"bunker://{BUNKER_PUBKEY}?relay=ws%3A%2F%2Flocalhost%3A8081"
 def emacs_available():
     """Check if Emacs is available and meets minimum version requirement."""
     if not shutil.which("emacs"):
-        pytest.skip("Emacs not available")
+        pytest.fail("Emacs not available - install Emacs 27.1+ to run integration tests")
 
     # Check version
     try:
@@ -58,9 +58,9 @@ def emacs_available():
         version_str = version_line.split()[-1]
         major_version = int(version_str.split(".")[0])
         if major_version < 27:
-            pytest.skip(f"Emacs version {version_str} < 27.1 (minimum required)")
+            pytest.fail(f"Emacs version {version_str} < 27.1 (minimum required)")
     except (subprocess.TimeoutExpired, ValueError, IndexError):
-        pytest.skip("Could not determine Emacs version")
+        pytest.fail("Could not determine Emacs version")
 
     return True
 
