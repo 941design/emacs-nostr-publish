@@ -269,25 +269,27 @@ make test-e2e
 Run `make help` to see all available targets:
 
 ```bash
-make help              # Show all targets with descriptions
+make build             # Build distribution packages
+make clean             # Clean build artifacts
+make dry-run           # Dry-run publish example (requires test fixture)
+make format            # Auto-fix linting and formatting issues
+make format-md         # Format markdown tables in all .md files
+make help              # Show this help message
+make install           # Install CLI tool globally via uv
+make install-hooks     # Install git hooks
+make lint              # Run linter and formatter check
+make publish           # Publish to PyPI (requires UV_PUBLISH_TOKEN)
+make publish-test      # Publish to TestPyPI
+make stack-down        # Stop local test stack and remove volumes
+make stack-up          # Start local test stack (relay + signer)
 make sync              # Sync venv with production dependencies
 make sync-dev          # Sync venv with dev dependencies
-make install           # Install package to user space from source
-make build             # Build distribution packages
-make publish-test      # Publish to TestPyPI
-make publish           # Publish to PyPI
 make test              # Run all tests
-make test-unit         # Run unit tests only
 make test-e2e          # Run integration tests only
-make lint              # Run linter and formatter check
-make format            # Auto-fix linting and formatting
-make format-md         # Format markdown tables
-make install-hooks     # Install git pre-commit/pre-push hooks
-make clean             # Remove build artifacts
-make dry-run           # Test event construction without publishing
-make version-patch     # Bump patch version (0.1.0 -> 0.1.1)
-make version-minor     # Bump minor version (0.1.0 -> 0.2.0)
+make test-unit         # Run unit tests only
 make version-major     # Bump major version (0.1.0 -> 1.0.0)
+make version-minor     # Bump minor version (0.1.0 -> 0.2.0)
+make version-patch     # Bump patch version (0.1.0 -> 0.1.1)
 ```
 
 ### Property-Based Testing
