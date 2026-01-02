@@ -3,8 +3,6 @@
 Deterministic unsigned event generation from validated frontmatter and body.
 """
 
-from typing import List
-
 from .models import Frontmatter, UnsignedEvent
 
 
@@ -57,7 +55,7 @@ def construct_event(frontmatter: Frontmatter, body: str) -> UnsignedEvent:
     return UnsignedEvent(kind=30023, content=body, tags=tags)
 
 
-def build_tags(frontmatter: Frontmatter) -> List[List[str]]:
+def build_tags(frontmatter: Frontmatter) -> list[list[str]]:
     """Build deterministic tag list from frontmatter.
 
     CONTRACT:
@@ -82,7 +80,7 @@ def build_tags(frontmatter: Frontmatter) -> List[List[str]]:
       Algorithm:
         Same as construct_event algorithm steps 1-4 (tag construction portion).
     """
-    tags: List[List[str]] = []
+    tags: list[list[str]] = []
 
     tags.append(["d", frontmatter.slug])
     tags.append(["title", frontmatter.title])

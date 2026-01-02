@@ -3,7 +3,7 @@
 Parses YAML frontmatter delimited by --- markers and extracts body content.
 """
 
-from typing import Optional, Tuple
+from typing import Optional
 
 import yaml
 
@@ -11,7 +11,7 @@ from .errors import FrontmatterParseError
 from .models import Frontmatter
 
 
-def parse_frontmatter(markdown_content: str) -> Tuple[Optional[dict], str]:
+def parse_frontmatter(markdown_content: str) -> tuple[Optional[dict], str]:
     """Extract YAML frontmatter and body from Markdown content.
 
     CONTRACT:

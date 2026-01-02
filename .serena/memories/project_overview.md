@@ -9,7 +9,7 @@ nostr-publish is a deterministic, cross-platform publisher for Nostr long-form c
 - **Emacs-first**: Designed as bridge to bring Nostr publishing to Emacs
 
 ## Tech Stack
-- **Language**: Python 3.8+ (single dependency: PyYAML)
+- **Language**: Python 3.9+ (single dependency: PyYAML)
 - **Package Manager**: uv (NOT pip or poetry)
 - **Testing**: pytest + Hypothesis (property-based testing)
 - **Linting/Formatting**: ruff

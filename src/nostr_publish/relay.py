@@ -4,7 +4,7 @@ Implements CLI relay allowlist per spec section 7.
 """
 
 import sys
-from typing import List, Optional
+from typing import Optional
 from urllib.parse import urlparse
 
 from .errors import InvalidRelayURLError, NoRelaysError, RelayNotInAllowlistError
@@ -12,8 +12,8 @@ from .utils import deduplicate_preserving_order
 
 
 def resolve_relays(
-    cli_relays: List[str], frontmatter_relays: List[str], default_relays: Optional[List[str]] = None
-) -> List[str]:
+    cli_relays: list[str], frontmatter_relays: list[str], default_relays: Optional[list[str]] = None
+) -> list[str]:
     """Resolve final relay list using CLI as allowlist per spec section 7.
 
     CONTRACT:
@@ -131,7 +131,7 @@ def is_localhost_relay(url: str) -> bool:
         return False
 
 
-def warn_insecure_relays(relays: List[str]) -> None:
+def warn_insecure_relays(relays: list[str]) -> None:
     """Emit warning to stderr for ws:// relays that are not localhost.
 
     Production deployments should use wss:// for encrypted transport.

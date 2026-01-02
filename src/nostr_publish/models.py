@@ -4,7 +4,7 @@ Fully implemented data classes representing frontmatter, events, and related str
 """
 
 from dataclasses import dataclass, field
-from typing import List, Optional
+from typing import Optional
 
 
 @dataclass
@@ -18,8 +18,8 @@ class Frontmatter:
     slug: str
     summary: Optional[str] = None
     published_at: Optional[int] = None
-    tags: List[str] = field(default_factory=list)
-    relays: List[str] = field(default_factory=list)
+    tags: list[str] = field(default_factory=list)
+    relays: list[str] = field(default_factory=list)
 
     def __post_init__(self):
         """Ensure mutable defaults are instance-specific."""
@@ -39,7 +39,7 @@ class UnsignedEvent:
 
     kind: int
     content: str
-    tags: List[List[str]]
+    tags: list[list[str]]
 
     def to_dict(self) -> dict:
         """Convert to dictionary for JSON serialization."""

@@ -3,10 +3,8 @@
 Common utilities used across multiple modules.
 """
 
-from typing import List
 
-
-def deduplicate_preserving_order(items: List[str]) -> List[str]:
+def deduplicate_preserving_order(items: list[str]) -> list[str]:
     """Remove duplicates from list while preserving first occurrence order.
 
     CONTRACT:

@@ -7,7 +7,7 @@ import argparse
 import json
 import sys
 from pathlib import Path
-from typing import List, Optional
+from typing import Optional
 
 from . import __version__
 from .errors import NostrPublishError
@@ -18,7 +18,7 @@ from .relay import resolve_relays, warn_insecure_relays
 from .validator import validate_frontmatter, validate_frontmatter_dict
 
 
-def main(argv: Optional[List[str]] = None) -> int:
+def main(argv: Optional[list[str]] = None) -> int:
     """Main CLI entrypoint.
 
     CONTRACT:
@@ -150,7 +150,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         return 1
 
 
-def parse_arguments(argv: List[str]) -> dict:
+def parse_arguments(argv: list[str]) -> dict:
     """Parse CLI arguments into structured dictionary.
 
     CONTRACT:

@@ -48,7 +48,7 @@ import shutil
 import subprocess
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Optional
 
 import pytest
 
@@ -153,7 +153,7 @@ def docker_services():
 def run_nostr_publish(
     article_path: Path,
     bunker_uri: Optional[str] = None,
-    relays: Optional[List[str]] = None,
+    relays: Optional[list[str]] = None,
     dry_run: bool = False,
     timeout: int = TEST_TIMEOUT,
 ) -> subprocess.CompletedProcess:
@@ -178,7 +178,7 @@ def run_nostr_publish(
     return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout + 10, env=env)
 
 
-def fetch_event_from_relay(event_id: str, relay_url: str = RELAY_URL) -> Optional[Dict[str, Any]]:
+def fetch_event_from_relay(event_id: str, relay_url: str = RELAY_URL) -> Optional[dict[str, Any]]:
     """Fetch published event from relay using nak."""
     try:
         result = subprocess.run(["nak", "req", "-i", event_id, relay_url], capture_output=True, text=True, timeout=10)
@@ -201,7 +201,7 @@ def fetch_event_from_relay(event_id: str, relay_url: str = RELAY_URL) -> Optiona
         return None
 
 
-def assert_tag_present(tags: List[List[str]], tag_name: str, expected_value: str):
+def assert_tag_present(tags: list[list[str]], tag_name: str, expected_value: str):
     """Assert that a specific tag with expected value is present in tags."""
     matching_tags = [tag for tag in tags if len(tag) >= 2 and tag[0] == tag_name]
     assert len(matching_tags) > 0, f"Tag '{tag_name}' not found in tags"
@@ -213,7 +213,7 @@ def assert_tag_present(tags: List[List[str]], tag_name: str, expected_value: str
 
 
 def assert_tags_ordered_correctly(
-    tags: List[List[str]], frontmatter_has_summary: bool, frontmatter_has_published_at: bool
+    tags: list[list[str]], frontmatter_has_summary: bool, frontmatter_has_published_at: bool
 ):
     """Assert tags follow spec ordering: d, title, [summary], [published_at], [t tags sorted]."""
     assert len(tags) >= 2, "Event must have at least d and title tags"

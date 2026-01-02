@@ -5,13 +5,12 @@ Handles external process communication with nak CLI tool.
 
 import json
 import subprocess
-from typing import List
 
 from .errors import NakInvocationError, PublishTimeoutError, SigningError
 from .models import PublishResult, UnsignedEvent
 
 
-def invoke_nak(event: UnsignedEvent, bunker_uri: str, relays: List[str], timeout: int = 30) -> PublishResult:
+def invoke_nak(event: UnsignedEvent, bunker_uri: str, relays: list[str], timeout: int = 30) -> PublishResult:
     """Invoke nak subprocess to sign and publish event via NIP-46.
 
     CONTRACT:

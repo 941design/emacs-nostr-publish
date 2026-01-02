@@ -4,7 +4,7 @@ Complete guide for setting up nostr-publish from source and running against a lo
 
 ## Prerequisites
 
-- **Python 3.8+** with [uv](https://docs.astral.sh/uv/) package manager
+- **Python 3.9+** with [uv](https://docs.astral.sh/uv/) package manager
 - **Docker and Docker Compose** for local relay and signer
 - **[nak](https://github.com/fiatjaf/nak)** CLI tool (v0.17.4+)
 - **Emacs 27.1+** (for Emacs integration)
