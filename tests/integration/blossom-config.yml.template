@@ -37,9 +37,6 @@ upload:
   requireAuth: true
   requirePubkeyInRule: false
 
-media:
-  enabled: false
-
 list:
   requireAuth: false
   allowListOthers: true

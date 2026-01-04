@@ -28,7 +28,7 @@ services:
     restart: on-failure
 
   blossom:
-    image: ghcr.io/hzrd149/blossom-server:master
+    image: ghcr.io/hzrd149/blossom-server:4.4
     ports:
       - "${NOSTR_PUBLISH_BLOSSOM_PORT:-3000}:3000"
     volumes:
