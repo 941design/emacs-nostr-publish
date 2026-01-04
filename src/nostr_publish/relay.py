@@ -4,7 +4,6 @@ Implements CLI relay allowlist per spec section 7.
 """
 
 import sys
-from typing import Optional
 from urllib.parse import urlparse
 
 from .errors import InvalidRelayURLError, NoRelaysError, RelayNotInAllowlistError
@@ -12,7 +11,7 @@ from .utils import deduplicate_preserving_order
 
 
 def resolve_relays(
-    cli_relays: list[str], frontmatter_relays: list[str], default_relays: Optional[list[str]] = None
+    cli_relays: list[str], frontmatter_relays: list[str], default_relays: list[str] | None = None
 ) -> list[str]:
     """Resolve final relay list using CLI as allowlist per spec section 7.
 

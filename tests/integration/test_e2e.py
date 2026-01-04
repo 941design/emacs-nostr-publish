@@ -47,7 +47,7 @@ import os
 import subprocess
 import time
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 import pytest
 
@@ -58,11 +58,11 @@ TEST_TIMEOUT = 60
 
 def run_nostr_publish(
     article_path: Path,
-    bunker_uri: Optional[str] = None,
-    relays: Optional[list[str]] = None,
+    bunker_uri: str | None = None,
+    relays: list[str] | None = None,
     dry_run: bool = False,
     timeout: int = TEST_TIMEOUT,
-    client_secret: Optional[str] = None,
+    client_secret: str | None = None,
 ) -> subprocess.CompletedProcess:
     """Run nostr-publish CLI and return completed process."""
     cmd = ["nostr-publish", str(article_path)]
@@ -102,7 +102,7 @@ def parse_publish_result(stdout: str) -> dict[str, Any]:
         return {}
 
 
-def fetch_event_from_relay(event_id: str, relay_url: str) -> Optional[dict[str, Any]]:
+def fetch_event_from_relay(event_id: str, relay_url: str) -> dict[str, Any] | None:
     """Fetch published event from relay using nak."""
     try:
         result = subprocess.run(["nak", "req", "-i", event_id, relay_url], capture_output=True, text=True, timeout=10)

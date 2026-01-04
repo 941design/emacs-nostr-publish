@@ -30,6 +30,8 @@
 
 ;;; Code:
 
+(require 'subr-x)
+
 (defgroup nostr-publish nil
   "Publish Markdown to Nostr via NIP-23."
   :group 'applications

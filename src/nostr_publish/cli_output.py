@@ -5,12 +5,11 @@ Breaking change from previous text-based output format.
 """
 
 import json
-from typing import Optional
 
 from .models import PublishResult
 
 
-def format_publish_result(result: PublishResult, cover_metadata: Optional[dict] = None) -> str:
+def format_publish_result(result: PublishResult, cover_metadata: dict | None = None) -> str:
     """Format publish result as single JSON object.
 
     CONTRACT:

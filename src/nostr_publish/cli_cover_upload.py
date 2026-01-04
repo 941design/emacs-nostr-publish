@@ -4,7 +4,6 @@ Extends main CLI workflow with local file upload to Blossom.
 """
 
 from pathlib import Path
-from typing import Optional
 
 from .image_metadata import validate_image_metadata
 from .image_processing import get_processed_cover_path, process_cover_image
@@ -19,7 +18,7 @@ def orchestrate_cover_upload(
     bunker_uri: str,
     blossom_timeout: int,
     cover_size: str,
-) -> Optional[dict[str, str]]:
+) -> dict[str, str] | None:
     """Orchestrate cover image processing and Blossom upload workflow.
 
     CONTRACT:

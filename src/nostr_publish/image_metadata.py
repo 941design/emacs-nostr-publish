@@ -4,13 +4,12 @@ Handles parsing, validation, and MIME type inference for cover images.
 """
 
 import re
-from typing import Optional, Union
 
 from .errors import InvalidFieldTypeError, InvalidFieldValueError
 from .models import ImageMetadata
 
 
-def parse_image_field(image_value: Union[str, dict, None]) -> Optional[ImageMetadata]:
+def parse_image_field(image_value: str | dict | None) -> ImageMetadata | None:
     """Parse image field from frontmatter YAML into ImageMetadata.
 
     CONTRACT:
@@ -71,7 +70,7 @@ def parse_image_field(image_value: Union[str, dict, None]) -> Optional[ImageMeta
     raise InvalidFieldTypeError(f"image field must be None, string, or dict, got {type(image_value).__name__}")
 
 
-def infer_mime_type(url: str) -> Optional[str]:
+def infer_mime_type(url: str) -> str | None:
     """Infer MIME type from URL file extension.
 
     CONTRACT:
@@ -173,7 +172,7 @@ def resolve_image_file_path(file_path: str, markdown_file_dir: str) -> str:
         return str((Path(markdown_file_dir) / path).resolve())
 
 
-def validate_image_metadata(image: ImageMetadata, markdown_file_dir: Optional[str] = None) -> ImageMetadata:
+def validate_image_metadata(image: ImageMetadata, markdown_file_dir: str | None = None) -> ImageMetadata:
     """Validate ImageMetadata field values and constraints.
 
     CONTRACT:

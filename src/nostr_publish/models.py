@@ -4,7 +4,6 @@ Fully implemented data classes representing frontmatter, events, and related str
 """
 
 from dataclasses import dataclass, field
-from typing import Optional
 
 
 @dataclass
@@ -20,12 +19,12 @@ class ImageMetadata:
     - url and file are mutually exclusive (at least one required)
     """
 
-    url: Optional[str] = None
-    mime: Optional[str] = None
-    alt: Optional[str] = None
-    dim: Optional[str] = None
-    file: Optional[str] = None
-    hash: Optional[str] = None
+    url: str | None = None
+    mime: str | None = None
+    alt: str | None = None
+    dim: str | None = None
+    file: str | None = None
+    hash: str | None = None
 
 
 @dataclass
@@ -37,12 +36,12 @@ class Frontmatter:
 
     title: str
     slug: str
-    summary: Optional[str] = None
-    published_at: Optional[int] = None
+    summary: str | None = None
+    published_at: int | None = None
     tags: list[str] = field(default_factory=list)
     relays: list[str] = field(default_factory=list)
-    image: Optional[ImageMetadata] = None
-    naddr: Optional[str] = None
+    image: ImageMetadata | None = None
+    naddr: str | None = None
 
     def __post_init__(self):
         """Ensure mutable defaults are instance-specific."""
@@ -75,4 +74,4 @@ class PublishResult:
 
     event_id: str
     pubkey: str
-    naddr: Optional[str] = None
+    naddr: str | None = None

@@ -23,7 +23,7 @@ import re
 import subprocess
 import time
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 # Local constants (fixture-independent)
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
@@ -32,12 +32,12 @@ TEST_TIMEOUT = 60
 
 def run_nostr_publish_with_blossom(
     article_path: Path,
-    bunker_uri: Optional[str] = None,
-    relays: Optional[list[str]] = None,
-    blossom_url: Optional[str] = None,
+    bunker_uri: str | None = None,
+    relays: list[str] | None = None,
+    blossom_url: str | None = None,
     cover_size: str = "1200x630",
     timeout: int = TEST_TIMEOUT,
-    client_secret: Optional[str] = None,
+    client_secret: str | None = None,
 ) -> subprocess.CompletedProcess:
     """Run nostr-publish CLI with Blossom upload support."""
     cmd = ["nostr-publish", str(article_path)]
@@ -63,7 +63,7 @@ def run_nostr_publish_with_blossom(
     return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout + 30, env=env)
 
 
-def fetch_event_from_relay(event_id: str, relay_url: str) -> Optional[dict[str, Any]]:
+def fetch_event_from_relay(event_id: str, relay_url: str) -> dict[str, Any] | None:
     """Fetch published event from relay using nak."""
     try:
         result = subprocess.run(["nak", "req", "-i", event_id, relay_url], capture_output=True, text=True, timeout=10)
@@ -101,7 +101,7 @@ def parse_publish_result(stdout: str) -> dict[str, Any]:
         return {}
 
 
-def fetch_blob_from_blossom(blob_url: str) -> Optional[bytes]:
+def fetch_blob_from_blossom(blob_url: str) -> bytes | None:
     """Fetch blob content from Blossom server."""
     try:
         result = subprocess.run(["curl", "-s", blob_url], capture_output=True, timeout=30)

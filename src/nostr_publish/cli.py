@@ -7,7 +7,6 @@ import argparse
 import json
 import sys
 from pathlib import Path
-from typing import Optional
 
 from . import __version__
 from .cli_cover_upload import add_cover_arguments, orchestrate_cover_upload, validate_cover_arguments
@@ -21,7 +20,7 @@ from .relay import resolve_relays, warn_insecure_relays
 from .validator import validate_frontmatter, validate_frontmatter_dict
 
 
-def main(argv: Optional[list[str]] = None) -> int:
+def main(argv: list[str] | None = None) -> int:
     """Main CLI entrypoint.
 
     CONTRACT:
