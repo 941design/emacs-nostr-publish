@@ -104,6 +104,84 @@ Support for automated publishing in scripts and CI pipelines
 
 **Implementation**: `src/nostr_publish/cli.py:main()`, Makefile target `dry-run`
 
+#### [Implemented] Story: Add cover image to articles
+**As a** Nostr Content Creator, **I want to** specify a cover image for my articles using frontmatter, **so that** my articles display with visual headers on Nostr clients that support NIP-92 image metadata.
+
+**Acceptance Criteria**:
+- [x] Simple format: `image: https://example.com/cover.jpg` accepted
+- [x] Extended format with metadata: `image: {url, mime, alt, dim}` accepted
+- [x] Field aliases: `image`, `cover`, `img` all supported
+- [x] NIP-92 imeta tag generated with image metadata
+- [x] MIME type inferred from URL extension when not provided
+- [x] Tag ordering: imeta appears after published_at, before t tags
+- [x] Articles without image field continue working (backward compatible)
+
+**Implementation**: `src/nostr_publish/frontmatter.py`, `src/nostr_publish/validator.py`, `src/nostr_publish/event.py`, `src/nostr_publish/models.py`
+
+#### [Implemented] Story: Upload local cover images to Blossom
+**As a** Nostr Content Creator, **I want to** reference a local image file as my article's cover, **so that** I can use local images without manually uploading and copying URLs.
+
+**Acceptance Criteria**:
+- [x] `cover.file` field accepts local file path (relative to Markdown file)
+- [x] Mutual exclusivity: `cover.file` XOR `cover.url` (not both)
+- [x] Image processing: EXIF metadata stripped for privacy
+- [x] Image normalization: resized to 1200x630 (configurable via `--cover-size`)
+- [x] No-upscale policy: images smaller than target preserved at original size
+- [x] Processed image cached at `.nostr-publish/cache/covers/<slug>/cover.jpg`
+- [x] Cache auto-cleanup: old cached cover deleted on republish
+- [x] `--blossom URL` required when `cover.file` present
+- [x] Upload via `nak blossom upload` subprocess
+- [x] Frontmatter updated with `url`, `hash`, `dim`, `mime` after upload
+- [x] Published event uses Blossom URL, never local path
+- [x] Error messages sanitized (no file paths or internal details exposed)
+
+**Implementation**: `src/nostr_publish/image_processing.py`, `src/nostr_publish/nak.py`, `src/nostr_publish/cli_cover_upload.py`, `src/nostr_publish/cli.py`
+
+#### [Implemented] Story: Generate shareable article addresses (naddr)
+**As a** Nostr Content Creator, **I want to** receive a shareable NIP-19 encoded address (naddr) after publishing, **so that** I can share a single reference that works across any Nostr client and relay.
+
+**Acceptance Criteria**:
+- [x] CLI outputs `naddr` field in JSON response after successful publish
+- [x] naddr format: `naddr1{bech32-data}` encoding pubkey, kind 30023, and slug
+- [x] Emacs displays naddr in success message alongside event ID and pubkey
+- [x] Non-fatal encoding: publish succeeds even if naddr generation fails
+- [x] Warning logged to stderr if naddr encoding fails
+- [x] naddr omitted from output if encoding fails
+- [x] No relay hints included in naddr (per specification preference)
+- [x] naddr enables cross-relay article discovery and sharing
+
+**Implementation**: `src/nostr_publish/naddr_encoder.py`, `src/nostr_publish/cli_output.py`, `src/nostr_publish/cli.py`
+
+#### [Implemented] Story: Machine-parseable publish results
+**As a** CLI Power User, **I want to** receive publish results as structured JSON, **so that** I can integrate publishing into automated scripts and workflows.
+
+**Acceptance Criteria**:
+- [x] CLI outputs single-line JSON after successful publish
+- [x] JSON fields: `event_id`, `pubkey`, `naddr` (optional), `cover` (optional)
+- [x] Keys sorted alphabetically for deterministic output
+- [x] Valid JSON parseable by standard libraries
+- [x] No embedded newlines in JSON output
+- [x] UTF-8 characters preserved (not escaped to ASCII)
+- [x] Breaking change from previous plain text output format
+
+**Implementation**: `src/nostr_publish/cli_output.py`, `src/nostr_publish/models.py`
+
+#### [Implemented] Story: Idempotent publishing with cover images
+**As a** Nostr Content Creator, **I want to** republish articles with cover images without re-uploading unchanged images, **so that** I avoid duplicate uploads and bandwidth waste.
+
+**Acceptance Criteria**:
+- [x] Frontmatter accepts `image.file`, `image.url`, and `image.hash` simultaneously
+- [x] Hash computed from processed image file (SHA-256)
+- [x] First publish: upload to Blossom, write hash/url back to frontmatter
+- [x] Second publish: compare computed hash to frontmatter hash
+- [x] Matching hash skips upload, reuses existing URL
+- [x] Differing hash triggers re-upload with new hash/url
+- [x] YAML injection protection: hash/url values properly escaped
+- [x] Validation allows coexistence of file/url/hash fields
+- [x] Integration tests verify upload-skip behavior
+
+**Implementation**: `src/nostr_publish/cli_cover_upload.py:orchestrate_cover_upload()`, `src/nostr_publish/validator.py`, `src/nostr_publish/models.py`, integration tests in `tests/integration/test_cover_image_integration.py`
+
 ### Epic 2: Emacs Integration
 
 #### [Implemented] Story: Publish from Emacs with single keystroke

@@ -1,8 +1,8 @@
 # Code Style and Conventions
 
 ## Python Version
-- Target: Python 3.8+ (use features available in 3.8)
-- Configured in pyproject.toml: `target-version = "py38"`
+- Target: Python 3.9+ (use features available in 3.9)
+- Configured in pyproject.toml: `target-version = "py39"`
 
 ## Formatting (ruff)
 - Line length: 120 characters
@@ -27,9 +27,9 @@
 
 ## Type Hints
 - **Required**: All function signatures must have type hints
-- Use `Optional[T]` for nullable types
-- Use `List[T]`, `Tuple[T, ...]`, `Dict[K, V]` from typing module
-- Example: `def parse_frontmatter(markdown_content: str) -> Tuple[Optional[dict], str]:`
+- Use `X | None` for nullable types (Python 3.10+) or `Optional[T]` for 3.9 compat
+- Use built-in generics: `list[T]`, `tuple[T, ...]`, `dict[K, V]` (Python 3.9+)
+- Example: `def parse_frontmatter(markdown_content: str) -> tuple[dict | None, str]:`
 
 ## Docstrings
 - Required for all public functions, classes, and modules

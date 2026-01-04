@@ -9,7 +9,7 @@ tags:
   - gamma
   - zeta
 relays:
-  - ws://localhost:8081
+  - "*"
 ---
 # Complete Article
 

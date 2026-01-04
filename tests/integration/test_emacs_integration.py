@@ -27,21 +27,10 @@ from pathlib import Path
 
 import pytest
 
-# Import shared fixtures and constants from main e2e tests
-from test_e2e import (
-    BUNKER_PUBKEY,
-    CLIENT_SECRET,
-    RELAY_URL,
-    docker_services,  # noqa: F401 - pytest fixture
-)
-
 # Paths
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 NOSTR_PUBLISH_EL = PROJECT_ROOT / "nostr-publish.el"
 TEST_EMACS_E2E_EL = Path(__file__).parent / "test_emacs_e2e.el"
-
-# Bunker URI for tests (same format as Python tests)
-BUNKER_URI = f"bunker://{BUNKER_PUBKEY}?relay=ws%3A%2F%2Flocalhost%3A8081"
 
 
 @pytest.fixture(scope="module")
@@ -92,13 +81,19 @@ def run_emacs_tests(env_vars: dict) -> subprocess.CompletedProcess:
     return subprocess.run(cmd, capture_output=True, text=True, timeout=120, env=full_env)
 
 
-def test_emacs_integration_full_suite(docker_services, emacs_available):  # noqa: F811
+def test_emacs_integration_full_suite(docker_services, emacs_available):
     """Run the full Emacs integration test suite.
 
     This test runs all Emacs E2E tests in a single batch invocation.
     Individual test results are reported in Emacs output.
     """
-    env_vars = {"NOSTR_CLIENT_KEY": CLIENT_SECRET, "TEST_BUNKER_URI": BUNKER_URI, "TEST_RELAY_URL": RELAY_URL}
+    env_vars = {
+        "NOSTR_CLIENT_KEY": docker_services["client_secret"],
+        "TEST_BUNKER_URI": docker_services["bunker_uri"],
+        "TEST_RELAY_URL": docker_services["relay_url"],
+        "TEST_BLOSSOM_URL": docker_services["blossom_url"],
+        "TEST_FIXTURE_DIR": str(Path(__file__).parent / "fixtures"),
+    }
 
     result = run_emacs_tests(env_vars)
 

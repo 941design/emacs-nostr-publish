@@ -1,19 +1,21 @@
 """Unit tests for nak subprocess invocation.
 
-Property-based tests for invoke_nak and parse_nak_output functions.
+Property-based tests for invoke_nak, parse_nak_output, and upload_to_blossom functions.
 """
 
 import json
+import os
 import subprocess
+import tempfile
 from unittest.mock import MagicMock, patch
 
 import pytest
 from hypothesis import assume, given
 from hypothesis import strategies as st
 
-from nostr_publish.errors import NakInvocationError, PublishTimeoutError, SigningError
+from nostr_publish.errors import BlossomUploadError, NakInvocationError, PublishTimeoutError, SigningError
 from nostr_publish.models import PublishResult, UnsignedEvent
-from nostr_publish.nak import invoke_nak, parse_nak_output
+from nostr_publish.nak import invoke_nak, parse_nak_output, upload_to_blossom
 
 
 # Strategy for generating valid event IDs (64-character hex strings)
@@ -529,3 +531,581 @@ publishing to relay2.example.com... success."""
 
             kwargs = mock_process.communicate.call_args[1]
             assert kwargs.get("timeout") == timeout
+
+
+# Strategy for generating valid blob hashes (opaque identifiers)
+@st.composite
+def blob_hashes(draw):
+    return "".join(draw(st.lists(st.sampled_from("0123456789abcdef"), min_size=64, max_size=64)))
+
+
+# Strategy for generating HTTP(S) URLs
+@st.composite
+def http_urls(draw):
+    """Generate valid HTTP(S) absolute URLs."""
+    schemes = st.sampled_from(["http://", "https://"])
+    domains = st.just("example.com")
+    paths = st.text(alphabet="abcdefghijklmnopqrstuvwxyz0123456789/-", min_size=1, max_size=50)
+
+    scheme = draw(schemes)
+    domain = draw(domains)
+    path = draw(paths)
+    return f"{scheme}{domain}/{path}"
+
+
+# Strategy for generating relative URLs (paths without scheme/domain)
+@st.composite
+def relative_urls(draw):
+    """Generate relative URL paths."""
+    paths = st.text(alphabet="abcdefghijklmnopqrstuvwxyz0123456789/-", min_size=1, max_size=50)
+    path = draw(paths)
+    return f"blob/{path}"
+
+
+# Strategy for generating Blossom base URLs
+@st.composite
+def blossom_base_urls(draw):
+    """Generate valid Blossom server base URLs."""
+    schemes = st.sampled_from(["http://", "https://"])
+    ports = st.sampled_from(["", ":3000", ":8080", ":5000"])
+
+    scheme = draw(schemes)
+    port = draw(ports)
+    return f"{scheme}blossom.example.com{port}"
+
+
+# Strategy for generating bunker URIs
+@st.composite
+def bunker_uris(draw):
+    """Generate valid NIP-46 bunker URIs for testing."""
+    # Use fixed test pubkey for simplicity
+    pubkey = "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798"
+    relays = st.sampled_from(["ws://localhost:8080", "wss://relay.example.com"])
+    relay = draw(relays)
+    return f"bunker://{pubkey}?relay={relay}"
+
+
+class TestUploadToBlossom:
+    """Property-based tests for upload_to_blossom function."""
+
+    @given(hash_val=blob_hashes(), url=http_urls(), base_url=blossom_base_urls(), bunker_uri=bunker_uris())
+    def test_upload_to_blossom_success_with_absolute_url(self, hash_val, url, base_url, bunker_uri):
+        """Property: successful upload with absolute URL returns hash and URL."""
+        with tempfile.NamedTemporaryFile(delete=False) as tmp:
+            tmp_path = tmp.name
+            tmp.write(b"test content")
+
+        try:
+            nak_output = json.dumps({"sha256": hash_val, "url": url})
+
+            with patch("subprocess.Popen") as mock_popen:
+                mock_process = MagicMock()
+                mock_process.communicate.return_value = (nak_output, "")
+                mock_process.returncode = 0
+                mock_popen.return_value = mock_process
+
+                result = upload_to_blossom(tmp_path, base_url, bunker_uri)
+
+                assert isinstance(result, dict)
+                assert result["hash"] == hash_val
+                assert result["url"] == url
+        finally:
+            os.unlink(tmp_path)
+
+    @given(hash_val=blob_hashes(), rel_url=relative_urls(), base_url=blossom_base_urls(), bunker_uri=bunker_uris())
+    def test_upload_to_blossom_normalizes_relative_url(self, hash_val, rel_url, base_url, bunker_uri):
+        """Property: relative URL is joined with blossom_url base."""
+        with tempfile.NamedTemporaryFile(delete=False) as tmp:
+            tmp_path = tmp.name
+            tmp.write(b"test content")
+
+        try:
+            nak_output = json.dumps({"sha256": hash_val, "url": rel_url})
+
+            with patch("subprocess.Popen") as mock_popen:
+                mock_process = MagicMock()
+                mock_process.communicate.return_value = (nak_output, "")
+                mock_process.returncode = 0
+                mock_popen.return_value = mock_process
+
+                result = upload_to_blossom(tmp_path, base_url, bunker_uri)
+
+                # Verify URL was normalized (starts with http:// or https://)
+                assert result["url"].startswith(("http://", "https://"))
+                # Verify result contains normalized URL
+                assert base_url.rstrip("/") in result["url"] or result["url"].startswith("http")
+        finally:
+            os.unlink(tmp_path)
+
+    @given(hash_val=blob_hashes(), base_url=blossom_base_urls(), bunker_uri=bunker_uris())
+    def test_upload_to_blossom_timeout_raises_error(self, hash_val, base_url, bunker_uri):
+        """Property: subprocess timeout raises BlossomUploadError."""
+        with tempfile.NamedTemporaryFile(delete=False) as tmp:
+            tmp_path = tmp.name
+            tmp.write(b"test content")
+
+        try:
+            timeout = 1
+
+            with patch("subprocess.Popen") as mock_popen:
+                mock_process = MagicMock()
+                mock_process.communicate.side_effect = subprocess.TimeoutExpired("nak", timeout)
+                mock_popen.return_value = mock_process
+
+                with pytest.raises(BlossomUploadError, match="timed out"):
+                    upload_to_blossom(tmp_path, base_url, bunker_uri, timeout)
+
+                mock_process.kill.assert_called_once()
+                mock_process.wait.assert_called_once()
+        finally:
+            os.unlink(tmp_path)
+
+    def test_upload_to_blossom_file_not_found_raises_error(self):
+        """Property: non-existent file raises BlossomUploadError."""
+        non_existent_path = "/tmp/non_existent_file_xyz_12345.txt"
+        base_url = "http://blossom.example.com"
+        bunker_uri = (
+            "bunker://79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798?relay=ws://localhost:8080"
+        )
+
+        with pytest.raises(BlossomUploadError, match="File not found"):
+            upload_to_blossom(non_existent_path, base_url, bunker_uri)
+
+    @given(hash_val=blob_hashes(), base_url=blossom_base_urls(), bunker_uri=bunker_uris())
+    def test_upload_to_blossom_nak_not_found_raises_error(self, hash_val, base_url, bunker_uri):
+        """Property: nak binary not found raises BlossomUploadError."""
+        with tempfile.NamedTemporaryFile(delete=False) as tmp:
+            tmp_path = tmp.name
+            tmp.write(b"test content")
+
+        try:
+            with patch("subprocess.Popen") as mock_popen:
+                mock_popen.side_effect = FileNotFoundError("nak not found")
+
+                with pytest.raises(BlossomUploadError, match="nak binary not found"):
+                    upload_to_blossom(tmp_path, base_url, bunker_uri)
+        finally:
+            os.unlink(tmp_path)
+
+    @given(hash_val=blob_hashes(), base_url=blossom_base_urls(), bunker_uri=bunker_uris())
+    def test_upload_to_blossom_process_error_raises_error(self, hash_val, base_url, bunker_uri):
+        """Property: process creation errors raise BlossomUploadError."""
+        with tempfile.NamedTemporaryFile(delete=False) as tmp:
+            tmp_path = tmp.name
+            tmp.write(b"test content")
+
+        try:
+            with patch("subprocess.Popen") as mock_popen:
+                mock_popen.side_effect = OSError("Permission denied")
+
+                with pytest.raises(BlossomUploadError, match="Failed to start nak"):
+                    upload_to_blossom(tmp_path, base_url, bunker_uri)
+        finally:
+            os.unlink(tmp_path)
+
+    @given(base_url=blossom_base_urls(), bunker_uri=bunker_uris())
+    def test_upload_to_blossom_non_zero_exit_raises_error(self, base_url, bunker_uri):
+        """Property: non-zero exit code raises BlossomUploadError."""
+        with tempfile.NamedTemporaryFile(delete=False) as tmp:
+            tmp_path = tmp.name
+            tmp.write(b"test content")
+
+        try:
+            with patch("subprocess.Popen") as mock_popen:
+                mock_process = MagicMock()
+                mock_process.communicate.return_value = ("", "Upload failed")
+                mock_process.returncode = 1
+                mock_popen.return_value = mock_process
+
+                with pytest.raises(BlossomUploadError, match="Blossom upload failed \\(exit code 1\\)"):
+                    upload_to_blossom(tmp_path, base_url, bunker_uri)
+        finally:
+            os.unlink(tmp_path)
+
+    @given(base_url=blossom_base_urls(), bunker_uri=bunker_uris())
+    def test_upload_to_blossom_empty_stderr_uses_exit_code_message(self, base_url, bunker_uri):
+        """Property: empty stderr falls back to exit code message."""
+        with tempfile.NamedTemporaryFile(delete=False) as tmp:
+            tmp_path = tmp.name
+            tmp.write(b"test content")
+
+        try:
+            with patch("subprocess.Popen") as mock_popen:
+                mock_process = MagicMock()
+                mock_process.communicate.return_value = ("", "")
+                mock_process.returncode = 42
+                mock_popen.return_value = mock_process
+
+                with pytest.raises(BlossomUploadError, match="Blossom upload failed \\(exit code 42\\)"):
+                    upload_to_blossom(tmp_path, base_url, bunker_uri)
+        finally:
+            os.unlink(tmp_path)
+
+    @given(hash_val=blob_hashes(), base_url=blossom_base_urls(), bunker_uri=bunker_uris())
+    def test_upload_to_blossom_invalid_json_raises_error(self, hash_val, base_url, bunker_uri):
+        """Property: invalid JSON output raises BlossomUploadError."""
+        with tempfile.NamedTemporaryFile(delete=False) as tmp:
+            tmp_path = tmp.name
+            tmp.write(b"test content")
+
+        try:
+            invalid_json = "{this is not json}"
+
+            with patch("subprocess.Popen") as mock_popen:
+                mock_process = MagicMock()
+                mock_process.communicate.return_value = (invalid_json, "")
+                mock_process.returncode = 0
+                mock_popen.return_value = mock_process
+
+                with pytest.raises(BlossomUploadError, match="Failed to parse nak output as JSON"):
+                    upload_to_blossom(tmp_path, base_url, bunker_uri)
+        finally:
+            os.unlink(tmp_path)
+
+    @given(base_url=blossom_base_urls(), bunker_uri=bunker_uris())
+    def test_upload_to_blossom_non_object_json_raises_error(self, base_url, bunker_uri):
+        """Property: non-object JSON raises BlossomUploadError."""
+        with tempfile.NamedTemporaryFile(delete=False) as tmp:
+            tmp_path = tmp.name
+            tmp.write(b"test content")
+
+        try:
+            json_array = json.dumps(["sha256", "url"])
+
+            with patch("subprocess.Popen") as mock_popen:
+                mock_process = MagicMock()
+                mock_process.communicate.return_value = (json_array, "")
+                mock_process.returncode = 0
+                mock_popen.return_value = mock_process
+
+                with pytest.raises(BlossomUploadError, match="not a JSON object"):
+                    upload_to_blossom(tmp_path, base_url, bunker_uri)
+        finally:
+            os.unlink(tmp_path)
+
+    @given(url=http_urls(), base_url=blossom_base_urls(), bunker_uri=bunker_uris())
+    def test_upload_to_blossom_missing_hash_raises_error(self, url, base_url, bunker_uri):
+        """Property: missing sha256 field raises BlossomUploadError."""
+        with tempfile.NamedTemporaryFile(delete=False) as tmp:
+            tmp_path = tmp.name
+            tmp.write(b"test content")
+
+        try:
+            nak_output = json.dumps({"url": url})
+
+            with patch("subprocess.Popen") as mock_popen:
+                mock_process = MagicMock()
+                mock_process.communicate.return_value = (nak_output, "")
+                mock_process.returncode = 0
+                mock_popen.return_value = mock_process
+
+                with pytest.raises(BlossomUploadError, match="missing required field: sha256"):
+                    upload_to_blossom(tmp_path, base_url, bunker_uri)
+        finally:
+            os.unlink(tmp_path)
+
+    @given(hash_val=blob_hashes(), base_url=blossom_base_urls(), bunker_uri=bunker_uris())
+    def test_upload_to_blossom_missing_url_raises_error(self, hash_val, base_url, bunker_uri):
+        """Property: missing url field raises BlossomUploadError."""
+        with tempfile.NamedTemporaryFile(delete=False) as tmp:
+            tmp_path = tmp.name
+            tmp.write(b"test content")
+
+        try:
+            nak_output = json.dumps({"sha256": hash_val})
+
+            with patch("subprocess.Popen") as mock_popen:
+                mock_process = MagicMock()
+                mock_process.communicate.return_value = (nak_output, "")
+                mock_process.returncode = 0
+                mock_popen.return_value = mock_process
+
+                with pytest.raises(BlossomUploadError, match="missing required field: url"):
+                    upload_to_blossom(tmp_path, base_url, bunker_uri)
+        finally:
+            os.unlink(tmp_path)
+
+    @given(hash_val=blob_hashes(), base_url=blossom_base_urls(), bunker_uri=bunker_uris())
+    def test_upload_to_blossom_empty_hash_raises_error(self, hash_val, base_url, bunker_uri):
+        """Property: empty sha256 field raises BlossomUploadError."""
+        with tempfile.NamedTemporaryFile(delete=False) as tmp:
+            tmp_path = tmp.name
+            tmp.write(b"test content")
+
+        try:
+            nak_output = json.dumps({"sha256": "   ", "url": "http://example.com/blob"})
+
+            with patch("subprocess.Popen") as mock_popen:
+                mock_process = MagicMock()
+                mock_process.communicate.return_value = (nak_output, "")
+                mock_process.returncode = 0
+                mock_popen.return_value = mock_process
+
+                with pytest.raises(BlossomUploadError, match="missing required field: sha256"):
+                    upload_to_blossom(tmp_path, base_url, bunker_uri)
+        finally:
+            os.unlink(tmp_path)
+
+    @given(hash_val=blob_hashes(), base_url=blossom_base_urls(), bunker_uri=bunker_uris())
+    def test_upload_to_blossom_empty_url_raises_error(self, hash_val, base_url, bunker_uri):
+        """Property: empty url field raises BlossomUploadError."""
+        with tempfile.NamedTemporaryFile(delete=False) as tmp:
+            tmp_path = tmp.name
+            tmp.write(b"test content")
+
+        try:
+            nak_output = json.dumps({"sha256": hash_val, "url": "   "})
+
+            with patch("subprocess.Popen") as mock_popen:
+                mock_process = MagicMock()
+                mock_process.communicate.return_value = (nak_output, "")
+                mock_process.returncode = 0
+                mock_popen.return_value = mock_process
+
+                with pytest.raises(BlossomUploadError, match="missing required field: url"):
+                    upload_to_blossom(tmp_path, base_url, bunker_uri)
+        finally:
+            os.unlink(tmp_path)
+
+    @given(hash_val=blob_hashes(), url=http_urls(), base_url=blossom_base_urls(), bunker_uri=bunker_uris())
+    def test_upload_to_blossom_passes_correct_command(self, hash_val, url, base_url, bunker_uri):
+        """Property: upload_to_blossom constructs command with correct structure."""
+        with tempfile.NamedTemporaryFile(delete=False) as tmp:
+            tmp_path = tmp.name
+            tmp.write(b"test content")
+
+        try:
+            nak_output = json.dumps({"sha256": hash_val, "url": url})
+
+            with patch("subprocess.Popen") as mock_popen:
+                mock_process = MagicMock()
+                mock_process.communicate.return_value = (nak_output, "")
+                mock_process.returncode = 0
+                mock_popen.return_value = mock_process
+
+                upload_to_blossom(tmp_path, base_url, bunker_uri)
+
+                called_cmd = mock_popen.call_args[0][0]
+
+                assert "nak" in called_cmd
+                assert "blossom" in called_cmd
+                assert "upload" in called_cmd
+                assert tmp_path in called_cmd
+                assert "--server" in called_cmd
+                assert base_url in called_cmd
+                assert "--sec" in called_cmd
+                assert bunker_uri in called_cmd
+                # nak blossom upload outputs JSON by default, no --json flag needed
+        finally:
+            os.unlink(tmp_path)
+
+    @given(hash_val=blob_hashes(), url=http_urls(), base_url=blossom_base_urls(), bunker_uri=bunker_uris())
+    def test_upload_to_blossom_uses_text_mode(self, hash_val, url, base_url, bunker_uri):
+        """Property: subprocess is created with text=True."""
+        with tempfile.NamedTemporaryFile(delete=False) as tmp:
+            tmp_path = tmp.name
+            tmp.write(b"test content")
+
+        try:
+            nak_output = json.dumps({"sha256": hash_val, "url": url})
+
+            with patch("subprocess.Popen") as mock_popen:
+                mock_process = MagicMock()
+                mock_process.communicate.return_value = (nak_output, "")
+                mock_process.returncode = 0
+                mock_popen.return_value = mock_process
+
+                upload_to_blossom(tmp_path, base_url, bunker_uri)
+
+                kwargs = mock_popen.call_args[1]
+                assert kwargs.get("text") is True
+                assert kwargs.get("stdout") == subprocess.PIPE
+                assert kwargs.get("stderr") == subprocess.PIPE
+        finally:
+            os.unlink(tmp_path)
+
+    @given(hash_val=blob_hashes(), url=http_urls(), base_url=blossom_base_urls(), bunker_uri=bunker_uris())
+    def test_upload_to_blossom_passes_timeout(self, hash_val, url, base_url, bunker_uri):
+        """Property: timeout parameter is passed to communicate."""
+        with tempfile.NamedTemporaryFile(delete=False) as tmp:
+            tmp_path = tmp.name
+            tmp.write(b"test content")
+
+        try:
+            timeout = 42
+            nak_output = json.dumps({"sha256": hash_val, "url": url})
+
+            with patch("subprocess.Popen") as mock_popen:
+                mock_process = MagicMock()
+                mock_process.communicate.return_value = (nak_output, "")
+                mock_process.returncode = 0
+                mock_popen.return_value = mock_process
+
+                upload_to_blossom(tmp_path, base_url, bunker_uri, timeout)
+
+                kwargs = mock_process.communicate.call_args[1]
+                assert kwargs.get("timeout") == timeout
+        finally:
+            os.unlink(tmp_path)
+
+    @given(hash_val=blob_hashes(), url=http_urls(), base_url=blossom_base_urls(), bunker_uri=bunker_uris())
+    def test_upload_to_blossom_returns_dict_with_hash_and_url(self, hash_val, url, base_url, bunker_uri):
+        """Property: returns dictionary with hash and url keys."""
+        with tempfile.NamedTemporaryFile(delete=False) as tmp:
+            tmp_path = tmp.name
+            tmp.write(b"test content")
+
+        try:
+            nak_output = json.dumps({"sha256": hash_val, "url": url})
+
+            with patch("subprocess.Popen") as mock_popen:
+                mock_process = MagicMock()
+                mock_process.communicate.return_value = (nak_output, "")
+                mock_process.returncode = 0
+                mock_popen.return_value = mock_process
+
+                result = upload_to_blossom(tmp_path, base_url, bunker_uri)
+
+                assert isinstance(result, dict)
+                assert set(result.keys()) == {"hash", "url"}
+                assert isinstance(result["hash"], str)
+                assert isinstance(result["url"], str)
+        finally:
+            os.unlink(tmp_path)
+
+    @given(hash_val=blob_hashes(), base_url=blossom_base_urls(), bunker_uri=bunker_uris())
+    def test_upload_to_blossom_deterministic_for_same_output(self, hash_val, base_url, bunker_uri):
+        """Property: same nak output yields same result (determinism)."""
+        with tempfile.NamedTemporaryFile(delete=False) as tmp:
+            tmp_path = tmp.name
+            tmp.write(b"test content")
+
+        try:
+            url = "http://example.com/blob/abc123"
+            nak_output = json.dumps({"sha256": hash_val, "url": url})
+
+            with patch("subprocess.Popen") as mock_popen:
+                mock_process = MagicMock()
+                mock_process.communicate.return_value = (nak_output, "")
+                mock_process.returncode = 0
+                mock_popen.return_value = mock_process
+
+                result1 = upload_to_blossom(tmp_path, base_url, bunker_uri)
+                result2 = upload_to_blossom(tmp_path, base_url, bunker_uri)
+
+                assert result1 == result2
+                assert result1["hash"] == hash_val
+                assert result1["url"] == url
+        finally:
+            os.unlink(tmp_path)
+
+    @given(url=http_urls(), base_url=blossom_base_urls(), bunker_uri=bunker_uris())
+    def test_upload_to_blossom_hash_with_newline_raises_error(self, url, base_url, bunker_uri):
+        """Property: hash containing newline raises BlossomUploadError (YAML injection prevention)."""
+        with tempfile.NamedTemporaryFile(delete=False) as tmp:
+            tmp_path = tmp.name
+            tmp.write(b"test content")
+
+        try:
+            malicious_hash = "abc123\nmalicious: injected"
+            nak_output = json.dumps({"sha256": malicious_hash, "url": url})
+
+            with patch("subprocess.Popen") as mock_popen:
+                mock_process = MagicMock()
+                mock_process.communicate.return_value = (nak_output, "")
+                mock_process.returncode = 0
+                mock_popen.return_value = mock_process
+
+                with pytest.raises(BlossomUploadError, match="Invalid hash: contains newline"):
+                    upload_to_blossom(tmp_path, base_url, bunker_uri)
+        finally:
+            os.unlink(tmp_path)
+
+    @given(url=http_urls(), base_url=blossom_base_urls(), bunker_uri=bunker_uris())
+    def test_upload_to_blossom_hash_with_carriage_return_raises_error(self, url, base_url, bunker_uri):
+        """Property: hash containing carriage return raises BlossomUploadError (YAML injection prevention)."""
+        with tempfile.NamedTemporaryFile(delete=False) as tmp:
+            tmp_path = tmp.name
+            tmp.write(b"test content")
+
+        try:
+            malicious_hash = "abc123\rmalicious: injected"
+            nak_output = json.dumps({"sha256": malicious_hash, "url": url})
+
+            with patch("subprocess.Popen") as mock_popen:
+                mock_process = MagicMock()
+                mock_process.communicate.return_value = (nak_output, "")
+                mock_process.returncode = 0
+                mock_popen.return_value = mock_process
+
+                with pytest.raises(BlossomUploadError, match="Invalid hash: contains newline"):
+                    upload_to_blossom(tmp_path, base_url, bunker_uri)
+        finally:
+            os.unlink(tmp_path)
+
+    @given(hash_val=blob_hashes(), base_url=blossom_base_urls(), bunker_uri=bunker_uris())
+    def test_upload_to_blossom_url_with_newline_raises_error(self, hash_val, base_url, bunker_uri):
+        """Property: URL containing newline raises BlossomUploadError (YAML injection prevention)."""
+        with tempfile.NamedTemporaryFile(delete=False) as tmp:
+            tmp_path = tmp.name
+            tmp.write(b"test content")
+
+        try:
+            malicious_url = "http://example.com/blob\nmalicious: injected"
+            nak_output = json.dumps({"sha256": hash_val, "url": malicious_url})
+
+            with patch("subprocess.Popen") as mock_popen:
+                mock_process = MagicMock()
+                mock_process.communicate.return_value = (nak_output, "")
+                mock_process.returncode = 0
+                mock_popen.return_value = mock_process
+
+                with pytest.raises(BlossomUploadError, match="Invalid URL: contains newline"):
+                    upload_to_blossom(tmp_path, base_url, bunker_uri)
+        finally:
+            os.unlink(tmp_path)
+
+    @given(hash_val=blob_hashes(), base_url=blossom_base_urls(), bunker_uri=bunker_uris())
+    def test_upload_to_blossom_url_with_carriage_return_raises_error(self, hash_val, base_url, bunker_uri):
+        """Property: URL containing carriage return raises BlossomUploadError (YAML injection prevention)."""
+        with tempfile.NamedTemporaryFile(delete=False) as tmp:
+            tmp_path = tmp.name
+            tmp.write(b"test content")
+
+        try:
+            malicious_url = "http://example.com/blob\rmalicious: injected"
+            nak_output = json.dumps({"sha256": hash_val, "url": malicious_url})
+
+            with patch("subprocess.Popen") as mock_popen:
+                mock_process = MagicMock()
+                mock_process.communicate.return_value = (nak_output, "")
+                mock_process.returncode = 0
+                mock_popen.return_value = mock_process
+
+                with pytest.raises(BlossomUploadError, match="Invalid URL: contains newline"):
+                    upload_to_blossom(tmp_path, base_url, bunker_uri)
+        finally:
+            os.unlink(tmp_path)
+
+    @given(hash_val=blob_hashes(), base_url=blossom_base_urls(), bunker_uri=bunker_uris())
+    def test_upload_to_blossom_invalid_url_scheme_raises_error(self, hash_val, base_url, bunker_uri):
+        """Property: URL with invalid scheme after normalization raises BlossomUploadError."""
+        with tempfile.NamedTemporaryFile(delete=False) as tmp:
+            tmp_path = tmp.name
+            tmp.write(b"test content")
+
+        try:
+            # URL that stays invalid after normalization attempt
+            invalid_url = "ftp://example.com/blob"
+            nak_output = json.dumps({"sha256": hash_val, "url": invalid_url})
+
+            with patch("subprocess.Popen") as mock_popen:
+                mock_process = MagicMock()
+                mock_process.communicate.return_value = (nak_output, "")
+                mock_process.returncode = 0
+                mock_popen.return_value = mock_process
+
+                with pytest.raises(BlossomUploadError, match="Invalid URL format"):
+                    upload_to_blossom(tmp_path, base_url, bunker_uri)
+        finally:
+            os.unlink(tmp_path)

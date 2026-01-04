@@ -10,9 +10,12 @@ from pathlib import Path
 from typing import Optional
 
 from . import __version__
+from .cli_cover_upload import add_cover_arguments, orchestrate_cover_upload, validate_cover_arguments
+from .cli_output import format_publish_result
 from .errors import NostrPublishError
 from .event import construct_event
 from .frontmatter import dict_to_frontmatter, parse_frontmatter
+from .naddr_encoder import encode_naddr, validate_naddr
 from .nak import invoke_nak
 from .relay import resolve_relays, warn_insecure_relays
 from .validator import validate_frontmatter, validate_frontmatter_dict
@@ -57,23 +60,27 @@ def main(argv: Optional[list[str]] = None) -> int:
            a. Call validate_frontmatter_dict(frontmatter_dict)
            b. Convert to Frontmatter: dict_to_frontmatter(frontmatter_dict)
            c. Call validate_frontmatter(fm)
-        5. Construct event:
+        5. Validate cover arguments (considering dry-run mode)
+        6. If NOT dry-run and cover.file present:
+           a. Process and upload cover image
+           b. Update frontmatter with uploaded metadata
+        7. Construct event:
            a. Call construct_event(frontmatter, body)
-        6. Resolve relays (spec section 7):
+        8. Resolve relays (spec section 7):
            a. CLI relays serve as allowlist and defaults
            b. If frontmatter specifies relays, validate against allowlist
            c. If frontmatter omits relays or uses "*", use CLI defaults
-        7. If dry-run:
+        9. If dry-run:
            a. Print event JSON and relay list
            b. Return 0
-        8. Invoke nak:
+        10. Invoke nak:
            a. Require bunker_uri from CLI --bunker
            b. Call invoke_nak(event, bunker_uri, relays, timeout)
-        9. Print success result:
+        11. Print success result:
            a. Event ID
            b. Pubkey
            c. Relay success/failure counts
-        10. Return 0
+        12. Return 0
 
       Error Handling:
         - Catch all NostrPublishError exceptions
@@ -101,6 +108,30 @@ def main(argv: Optional[list[str]] = None) -> int:
         frontmatter = dict_to_frontmatter(frontmatter_dict)
         frontmatter = validate_frontmatter(frontmatter)
 
+        # Validate cover arguments if cover.file present
+        has_cover_file = frontmatter.image is not None and frontmatter.image.file is not None
+        has_cover_url = frontmatter.image is not None and frontmatter.image.url is not None
+        validate_cover_arguments(args, has_cover_file, has_cover_url)
+
+        # Process and upload cover image if cover.file present AND not dry-run
+        # Per spec section 5.2: dry-run MUST NOT process or upload
+        cover_metadata = None
+        if has_cover_file and args["blossom_url"] and not args["dry_run"]:
+            cover_metadata = orchestrate_cover_upload(
+                frontmatter,
+                args["file"],
+                args["blossom_url"],
+                args["bunker_uri"],
+                args["blossom_timeout"],
+                args["cover_size"],
+            )
+            # Update frontmatter with uploaded cover metadata
+            if cover_metadata:
+                frontmatter.image.url = cover_metadata["url"]
+                frontmatter.image.hash = cover_metadata["hash"]
+                frontmatter.image.dim = cover_metadata["dim"]
+                frontmatter.image.mime = cover_metadata["mime"]
+
         # Construct event
         event = construct_event(frontmatter, body)
 
@@ -124,9 +155,18 @@ def main(argv: Optional[list[str]] = None) -> int:
 
         result = invoke_nak(event, bunker_uri, relays, args["timeout"])
 
-        # Print success result
-        print(f"Published: {result.event_id}")
-        print(f"Pubkey: {result.pubkey}")
+        # Encode naddr after successful publish
+        try:
+            naddr = encode_naddr(result.pubkey, frontmatter.slug)
+            validate_naddr(naddr)
+            result.naddr = naddr
+        except NostrPublishError as e:
+            # Non-fatal: publish succeeded, naddr encoding failed
+            sys.stderr.write(f"WARNING: naddr encoding failed: {str(e)}\n")
+
+        # Format and print success result as JSON
+        output = format_publish_result(result, cover_metadata)
+        print(output)
 
         return 0
 
@@ -164,6 +204,10 @@ def parse_arguments(argv: list[str]) -> dict:
           * relays: list of relay URLs
           * dry_run: boolean
           * timeout: positive integer
+          * blossom_url: string or None
+          * blossom_timeout: positive integer
+          * cover_size: string in WxH format
+          * allow_dry_run_without_upload: boolean
 
       Invariants:
         - file argument is required (first positional)
@@ -229,6 +273,9 @@ def parse_arguments(argv: list[str]) -> dict:
         help="Timeout in seconds for signer and publish operations (default: 30)",
     )
 
+    # Add cover image upload arguments
+    add_cover_arguments(parser)
+
     parsed = parser.parse_args(argv)
 
     # Validate at least one relay is provided
@@ -248,6 +295,10 @@ def parse_arguments(argv: list[str]) -> dict:
         "relays": parsed.relays,
         "dry_run": parsed.dry_run,
         "timeout": parsed.timeout,
+        "blossom_url": getattr(parsed, "blossom_url", None),
+        "blossom_timeout": getattr(parsed, "blossom_timeout", 30),
+        "cover_size": getattr(parsed, "cover_size", "1200x630"),
+        "allow_dry_run_without_upload": getattr(parsed, "allow_dry_run_without_upload", False),
     }
 
 

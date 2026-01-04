@@ -6,13 +6,14 @@ Strict validation of all frontmatter fields with fail-fast error handling.
 import re
 
 from .errors import InvalidFieldTypeError, InvalidFieldValueError, MissingFieldError, UnknownFieldError
+from .image_metadata import validate_image_metadata
 from .models import Frontmatter
 from .utils import deduplicate_preserving_order
 
 # Slug must contain only lowercase letters, numbers, and hyphens
 SLUG_PATTERN = re.compile(r"^[a-z0-9-]+$")
 
-ALLOWED_FIELDS = {"title", "slug", "summary", "published_at", "tags", "relays"}
+ALLOWED_FIELDS = {"title", "slug", "summary", "published_at", "tags", "relays", "image", "naddr"}
 REQUIRED_FIELDS = {"title", "slug"}
 
 
@@ -79,7 +80,8 @@ def validate_frontmatter(fm: Frontmatter) -> Frontmatter:
         - summary: if present, non-empty string after trim
         - published_at: if present, non-negative integer
         - tags: list of non-empty strings after trim, no duplicates
-        - relays: list of valid WebSocket URLs (wss:// or ws://)
+        - relays: list of valid WebSocket URLs (wss:// or ws://), or "*" wildcard
+        - image: if present, validated ImageMetadata with valid URL and format constraints
 
       Properties:
         - Normalization: trimming whitespace is idempotent
@@ -116,8 +118,13 @@ def validate_frontmatter(fm: Frontmatter) -> Frontmatter:
            a. Check type is list, else raise InvalidFieldTypeError
            b. For each relay in list:
               - Check type is string, else raise InvalidFieldTypeError
-              - Check starts with "wss://" or "ws://", else raise InvalidFieldValueError
-        7. Return new Frontmatter instance with normalized values
+              - If relay is "*", allow it (wildcard for all CLI relays per spec 8.2)
+              - Otherwise check starts with "wss://" or "ws://", else raise InvalidFieldValueError
+        7. Validate image (if present):
+           a. If not None:
+              - Call validate_image_metadata(image)
+              - Return validated ImageMetadata
+        8. Return new Frontmatter instance with normalized values
 
       Raises:
         - InvalidFieldTypeError: Field has wrong type
@@ -174,8 +181,15 @@ def validate_frontmatter(fm: Frontmatter) -> Frontmatter:
         for relay in fm.relays:
             if not isinstance(relay, str):
                 raise InvalidFieldTypeError("Each relay must be a string")
-            if not (relay.startswith("wss://") or relay.startswith("ws://")):
+            # Allow "*" as wildcard meaning "use all CLI relays" (spec section 8.2)
+            if relay != "*" and not (relay.startswith("wss://") or relay.startswith("ws://")):
                 raise InvalidFieldValueError(f"Relay must be a WebSocket URL (wss:// or ws://): {relay}")
         relays = fm.relays
 
-    return Frontmatter(title=title, slug=slug, summary=summary, published_at=published_at, tags=tags, relays=relays)
+    image = None
+    if fm.image is not None:
+        image = validate_image_metadata(fm.image)
+
+    return Frontmatter(
+        title=title, slug=slug, summary=summary, published_at=published_at, tags=tags, relays=relays, image=image
+    )

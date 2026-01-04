@@ -9,7 +9,7 @@ nostr-publish is a deterministic, cross-platform publisher for Nostr long-form c
 - **Emacs-first**: Designed as bridge to bring Nostr publishing to Emacs
 
 ## Tech Stack
-- **Language**: Python 3.9+ (single dependency: PyYAML)
+- **Language**: Python 3.9+ (dependencies: PyYAML, Pillow)
 - **Package Manager**: uv (NOT pip or poetry)
 - **Testing**: pytest + Hypothesis (property-based testing)
 - **Linting/Formatting**: ruff
@@ -19,16 +19,21 @@ nostr-publish is a deterministic, cross-platform publisher for Nostr long-form c
 ## Codebase Structure
 ```
 src/nostr_publish/
-├── __init__.py      # Package init with version
-├── cli.py           # CLI entry point (main, parse_arguments)
-├── models.py        # Data models (Frontmatter, UnsignedEvent, PublishResult)
-├── frontmatter.py   # YAML frontmatter parsing
-├── validator.py     # Frontmatter validation
-├── event.py         # Nostr event construction
-├── relay.py         # Relay URL handling
-├── nak.py           # nak CLI subprocess wrapper
-├── errors.py        # Custom exception hierarchy
-└── utils.py         # Utility functions
+├── __init__.py          # Package init with version
+├── cli.py               # CLI entry point (main, parse_arguments)
+├── cli_output.py        # JSON output formatting for CLI results
+├── cli_cover_upload.py  # Cover image upload CLI commands
+├── models.py            # Data models (Frontmatter, UnsignedEvent, PublishResult, ImageMetadata)
+├── frontmatter.py       # YAML frontmatter parsing
+├── validator.py         # Frontmatter validation
+├── event.py             # Nostr event construction
+├── relay.py             # Relay URL handling
+├── nak.py               # nak CLI subprocess wrapper
+├── naddr_encoder.py     # NIP-19 naddr encoding for article addresses
+├── image_metadata.py    # NIP-92 image metadata extraction
+├── image_processing.py  # Image processing and optimization
+├── errors.py            # Custom exception hierarchy
+└── utils.py             # Utility functions
 
 tests/
 ├── unit/            # Unit tests (fast, no external dependencies)
@@ -36,13 +41,18 @@ tests/
     └── fixtures/    # Test markdown files
 
 specs/spec.md        # Complete technical specification
-docs/                # Documentation (local-setup, test-setup, etc.)
+docs/                # Documentation (local-setup, test-setup, publishing, etc.)
 ```
 
 ## Key Features
 - Markdown authoring with YAML frontmatter
+- Cover images with NIP-92 metadata tags
+- Local image upload to Blossom servers
+- Idempotent publishing (hash-based skip for unchanged images)
+- Shareable addresses via NIP-19 naddr encoding
 - Remote signing via NIP-46 (bunker URIs)
 - Deterministic event construction (same input = identical events)
+- JSON output for machine-parseable results
 - CLI + Emacs integration (C-c C-p)
 - Strict validation with fail-fast semantics
 

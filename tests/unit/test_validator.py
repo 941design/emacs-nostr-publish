@@ -9,7 +9,7 @@ from hypothesis import assume, given
 from hypothesis import strategies as st
 
 from nostr_publish.errors import InvalidFieldTypeError, InvalidFieldValueError, MissingFieldError, UnknownFieldError
-from nostr_publish.models import Frontmatter
+from nostr_publish.models import Frontmatter, ImageMetadata
 from nostr_publish.utils import deduplicate_preserving_order
 from nostr_publish.validator import ALLOWED_FIELDS, REQUIRED_FIELDS, validate_frontmatter, validate_frontmatter_dict
 
@@ -491,15 +491,21 @@ class TestValidateFrontmatter:
         result = validate_frontmatter(fm)
         assert result.relays == ["ws://relay.example.com"]
 
+    def test_validate_frontmatter_relay_wildcard_passes(self):
+        """Example-based: Wildcard '*' relay passes validation (spec section 8.2)."""
+        fm = Frontmatter(title="Title", slug="slug", relays=["*"])
+        result = validate_frontmatter(fm)
+        assert result.relays == ["*"]
+
     def test_validate_frontmatter_relay_plain_url_fails(self):
         """Example-based: Plain URL without protocol fails validation."""
         fm = Frontmatter(title="Title", slug="slug", relays=["relay.example.com"])
         with pytest.raises(InvalidFieldValueError):
             validate_frontmatter(fm)
 
-    @given(st.text(min_size=1).filter(lambda s: not s.startswith("wss://") and not s.startswith("ws://")))
+    @given(st.text(min_size=1).filter(lambda s: not s.startswith("wss://") and not s.startswith("ws://") and s != "*"))
     def test_validate_frontmatter_relays_rejects_non_ws(self, relay):
-        """Property: Non-WebSocket relay strings fail validation."""
+        """Property: Non-WebSocket relay strings fail validation (except wildcard '*')."""
         fm = Frontmatter(title="Title", slug="slug", relays=[relay])
         with pytest.raises(InvalidFieldValueError):
             validate_frontmatter(fm)
@@ -546,3 +552,226 @@ class TestValidateFrontmatter:
         fm = Frontmatter(title="Title", slug="slug", tags=tags)
         result = validate_frontmatter(fm)
         assert all(tag in tags for tag in result.tags)
+
+    def test_validate_frontmatter_image_none_preserved(self):
+        """Example-based: None image is preserved."""
+        fm = Frontmatter(title="Title", slug="slug", image=None)
+        result = validate_frontmatter(fm)
+        assert result.image is None
+
+    def test_validate_frontmatter_image_valid_url(self):
+        """Example-based: Valid image with https URL passes validation."""
+        image = ImageMetadata(url="https://example.com/image.jpg")
+        fm = Frontmatter(title="Title", slug="slug", image=image)
+        result = validate_frontmatter(fm)
+        assert result.image is not None
+        assert result.image.url == "https://example.com/image.jpg"
+
+    def test_validate_frontmatter_image_ws_url(self):
+        """Example-based: Valid image with http URL passes validation."""
+        image = ImageMetadata(url="http://example.com/image.png")
+        fm = Frontmatter(title="Title", slug="slug", image=image)
+        result = validate_frontmatter(fm)
+        assert result.image is not None
+        assert result.image.url == "http://example.com/image.png"
+
+    def test_validate_frontmatter_image_trimmed_url(self):
+        """Example-based: Image URL whitespace is trimmed."""
+        image = ImageMetadata(url="  https://example.com/image.jpg  ")
+        fm = Frontmatter(title="Title", slug="slug", image=image)
+        result = validate_frontmatter(fm)
+        assert result.image.url == "https://example.com/image.jpg"
+
+    def test_validate_frontmatter_image_with_mime(self):
+        """Example-based: Image with explicit mime type passes."""
+        image = ImageMetadata(url="https://example.com/image.jpg", mime="image/jpeg")
+        fm = Frontmatter(title="Title", slug="slug", image=image)
+        result = validate_frontmatter(fm)
+        assert result.image.mime == "image/jpeg"
+
+    def test_validate_frontmatter_image_with_alt(self):
+        """Example-based: Image with alt text passes."""
+        image = ImageMetadata(url="https://example.com/image.jpg", alt="A test image")
+        fm = Frontmatter(title="Title", slug="slug", image=image)
+        result = validate_frontmatter(fm)
+        assert result.image.alt == "A test image"
+
+    def test_validate_frontmatter_image_with_dim(self):
+        """Example-based: Image with dimensions passes."""
+        image = ImageMetadata(url="https://example.com/image.jpg", dim="1920x1080")
+        fm = Frontmatter(title="Title", slug="slug", image=image)
+        result = validate_frontmatter(fm)
+        assert result.image.dim == "1920x1080"
+
+    def test_validate_frontmatter_image_all_fields(self):
+        """Example-based: Image with all fields passes validation."""
+        image = ImageMetadata(
+            url="https://example.com/image.jpg", mime="image/jpeg", alt="A test image", dim="1920x1080"
+        )
+        fm = Frontmatter(title="Title", slug="slug", image=image)
+        result = validate_frontmatter(fm)
+        assert result.image.url == "https://example.com/image.jpg"
+        assert result.image.mime == "image/jpeg"
+        assert result.image.alt == "A test image"
+        assert result.image.dim == "1920x1080"
+
+    def test_validate_frontmatter_image_empty_url_fails(self):
+        """Example-based: Image with empty URL fails validation."""
+        image = ImageMetadata(url="")
+        fm = Frontmatter(title="Title", slug="slug", image=image)
+        with pytest.raises(InvalidFieldValueError):
+            validate_frontmatter(fm)
+
+    def test_validate_frontmatter_image_whitespace_only_url_fails(self):
+        """Example-based: Image with whitespace-only URL fails validation."""
+        image = ImageMetadata(url="   ")
+        fm = Frontmatter(title="Title", slug="slug", image=image)
+        with pytest.raises(InvalidFieldValueError):
+            validate_frontmatter(fm)
+
+    def test_validate_frontmatter_image_non_http_url_fails(self):
+        """Example-based: Image with non-HTTP URL fails validation."""
+        image = ImageMetadata(url="ftp://example.com/image.jpg")
+        fm = Frontmatter(title="Title", slug="slug", image=image)
+        with pytest.raises(InvalidFieldValueError):
+            validate_frontmatter(fm)
+
+    def test_validate_frontmatter_image_relative_url_fails(self):
+        """Example-based: Image with relative URL fails validation."""
+        image = ImageMetadata(url="/image.jpg")
+        fm = Frontmatter(title="Title", slug="slug", image=image)
+        with pytest.raises(InvalidFieldValueError):
+            validate_frontmatter(fm)
+
+    @given(st.from_regex(r"^https?://[a-z0-9-]+\.[a-z0-9-]+\.(jpg|png|gif|webp|svg)$", fullmatch=True))
+    def test_validate_frontmatter_image_valid_http_urls(self, url):
+        """Property: Valid HTTP/HTTPS URLs pass validation."""
+        image = ImageMetadata(url=url)
+        fm = Frontmatter(title="Title", slug="slug", image=image)
+        result = validate_frontmatter(fm)
+        assert result.image.url == url
+
+    @given(st.text(min_size=1).filter(lambda s: not s.startswith("http://") and not s.startswith("https://")))
+    def test_validate_frontmatter_image_rejects_non_http_urls(self, url):
+        """Property: Non-HTTP/HTTPS URLs fail validation."""
+        image = ImageMetadata(url=url)
+        fm = Frontmatter(title="Title", slug="slug", image=image)
+        with pytest.raises(InvalidFieldValueError):
+            validate_frontmatter(fm)
+
+    def test_validate_frontmatter_image_invalid_mime_format_fails(self):
+        """Example-based: Image with invalid MIME format fails validation."""
+        image = ImageMetadata(url="https://example.com/image.jpg", mime="notavalidmime")
+        fm = Frontmatter(title="Title", slug="slug", image=image)
+        with pytest.raises(InvalidFieldValueError):
+            validate_frontmatter(fm)
+
+    def test_validate_frontmatter_image_empty_mime_fails(self):
+        """Example-based: Image with empty MIME fails validation."""
+        image = ImageMetadata(url="https://example.com/image.jpg", mime="")
+        fm = Frontmatter(title="Title", slug="slug", image=image)
+        with pytest.raises(InvalidFieldValueError):
+            validate_frontmatter(fm)
+
+    def test_validate_frontmatter_image_empty_alt_fails(self):
+        """Example-based: Image with empty alt text fails validation."""
+        image = ImageMetadata(url="https://example.com/image.jpg", alt="")
+        fm = Frontmatter(title="Title", slug="slug", image=image)
+        with pytest.raises(InvalidFieldValueError):
+            validate_frontmatter(fm)
+
+    def test_validate_frontmatter_image_invalid_dim_format_fails(self):
+        """Example-based: Image with invalid dimension format fails validation."""
+        image = ImageMetadata(url="https://example.com/image.jpg", dim="1920-1080")
+        fm = Frontmatter(title="Title", slug="slug", image=image)
+        with pytest.raises(InvalidFieldValueError):
+            validate_frontmatter(fm)
+
+    def test_validate_frontmatter_image_empty_dim_fails(self):
+        """Example-based: Image with empty dimensions fails validation."""
+        image = ImageMetadata(url="https://example.com/image.jpg", dim="")
+        fm = Frontmatter(title="Title", slug="slug", image=image)
+        with pytest.raises(InvalidFieldValueError):
+            validate_frontmatter(fm)
+
+    @given(st.from_regex(r"^\d+x\d+$", fullmatch=True))
+    def test_validate_frontmatter_image_valid_dimensions(self, dim):
+        """Property: Valid dimension formats pass validation."""
+        image = ImageMetadata(url="https://example.com/image.jpg", dim=dim)
+        fm = Frontmatter(title="Title", slug="slug", image=image)
+        result = validate_frontmatter(fm)
+        assert result.image.dim == dim
+
+    @given(st.text(min_size=1).filter(lambda s: not __import__("re").match(r"^\d+x\d+$", s)))
+    def test_validate_frontmatter_image_rejects_invalid_dimensions(self, dim):
+        """Property: Invalid dimension formats fail validation."""
+        image = ImageMetadata(url="https://example.com/image.jpg", dim=dim)
+        fm = Frontmatter(title="Title", slug="slug", image=image)
+        with pytest.raises(InvalidFieldValueError):
+            validate_frontmatter(fm)
+
+    def test_validate_frontmatter_image_inferred_mime_jpg(self):
+        """Example-based: MIME type inferred from .jpg extension."""
+        image = ImageMetadata(url="https://example.com/image.jpg")
+        fm = Frontmatter(title="Title", slug="slug", image=image)
+        result = validate_frontmatter(fm)
+        assert result.image.mime == "image/jpeg"
+
+    def test_validate_frontmatter_image_inferred_mime_png(self):
+        """Example-based: MIME type inferred from .png extension."""
+        image = ImageMetadata(url="https://example.com/image.png")
+        fm = Frontmatter(title="Title", slug="slug", image=image)
+        result = validate_frontmatter(fm)
+        assert result.image.mime == "image/png"
+
+    def test_validate_frontmatter_image_inferred_mime_gif(self):
+        """Example-based: MIME type inferred from .gif extension."""
+        image = ImageMetadata(url="https://example.com/image.gif")
+        fm = Frontmatter(title="Title", slug="slug", image=image)
+        result = validate_frontmatter(fm)
+        assert result.image.mime == "image/gif"
+
+    def test_validate_frontmatter_image_mime_trimmed(self):
+        """Example-based: MIME type whitespace is trimmed."""
+        image = ImageMetadata(url="https://example.com/image.jpg", mime="  image/jpeg  ")
+        fm = Frontmatter(title="Title", slug="slug", image=image)
+        result = validate_frontmatter(fm)
+        assert result.image.mime == "image/jpeg"
+
+    def test_validate_frontmatter_image_alt_trimmed(self):
+        """Example-based: Alt text whitespace is trimmed."""
+        image = ImageMetadata(url="https://example.com/image.jpg", alt="  Alt text  ")
+        fm = Frontmatter(title="Title", slug="slug", image=image)
+        result = validate_frontmatter(fm)
+        assert result.image.alt == "Alt text"
+
+    def test_validate_frontmatter_image_dim_trimmed(self):
+        """Example-based: Dimension string whitespace is trimmed."""
+        image = ImageMetadata(url="https://example.com/image.jpg", dim="  1920x1080  ")
+        fm = Frontmatter(title="Title", slug="slug", image=image)
+        result = validate_frontmatter(fm)
+        assert result.image.dim == "1920x1080"
+
+    @given(st.from_regex(r"^[a-z0-9]+/[a-z0-9+.-]+$", fullmatch=True))
+    def test_validate_frontmatter_image_valid_mime_formats(self, mime):
+        """Property: Valid MIME format with type/subtype passes."""
+        image = ImageMetadata(url="https://example.com/image.jpg", mime=mime)
+        fm = Frontmatter(title="Title", slug="slug", image=image)
+        result = validate_frontmatter(fm)
+        assert result.image.mime == mime
+
+    def test_validate_frontmatter_image_normalization_idempotent(self):
+        """Example-based: Image validation is idempotent."""
+        image = ImageMetadata(
+            url="  https://example.com/image.jpg  ", mime="  image/jpeg  ", alt="  Alt text  ", dim="  1920x1080  "
+        )
+        fm = Frontmatter(title="Title", slug="slug", image=image)
+        result1 = validate_frontmatter(fm)
+
+        fm2 = Frontmatter(title="Title", slug="slug", image=result1.image)
+        result2 = validate_frontmatter(fm2)
+
+        assert result1.image.url == result2.image.url
+        assert result1.image.mime == result2.image.mime
+        assert result1.image.alt == result2.image.alt
+        assert result1.image.dim == result2.image.dim

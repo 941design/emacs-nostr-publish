@@ -164,6 +164,7 @@ nak req -k 30023 -a <your-hex-pubkey> -l 5 wss://relay.example.com
    - `slug` (required)
    - `summary`
    - `published_at`
+   - `image`
    - `tags`
    - `relays`
 
@@ -192,6 +193,122 @@ date +%s
 - Lowercase letters, numbers, hyphens only
 - No spaces or special characters
 - Example: `my-article-2024` (valid), `My Article!` (invalid)
+
+### "Invalid image URL" Error
+
+**Symptom**: Image field rejected during validation
+
+**Requirements**:
+- Image URL must use `http://` or `https://` scheme
+- Valid formats:
+  ```yaml
+  # Simple format
+  image: https://example.com/cover.jpg
+
+  # Extended format
+  image:
+    url: https://example.com/cover.jpg
+    mime: image/jpeg
+    alt: Description
+    dim: 1200x630
+  ```
+
+**Common issues**:
+1. **Missing scheme**: Use full URL, not relative path
+   - ✓ `https://example.com/image.jpg`
+   - ✗ `/images/cover.jpg`
+   - ✗ `example.com/image.jpg`
+
+2. **Invalid dimension format**: Must be `WIDTHxHEIGHT`
+   - ✓ `1200x630`
+   - ✗ `1200,630`
+   - ✗ `1200px x 630px`
+
+3. **MIME type mismatch**: If specified, should match image type
+   - Generally safe to omit - MIME is inferred from file extension
+
+### Local Cover File Issues
+
+#### "--blossom required" Error
+
+**Symptom**: CLI fails with error about missing `--blossom` flag
+
+**Cause**: Using `image.file` requires a Blossom server for upload
+
+**Solution**: Provide the `--blossom` flag with your Blossom server URL:
+```bash
+nostr-publish article.md --bunker "bunker://..." --relay wss://relay.example.com \
+  --blossom https://blossom.example.com
+```
+
+#### "File not found" for image.file
+
+**Symptom**: CLI cannot find the local cover image file
+
+**Solutions**:
+1. **Use relative paths**: Paths are resolved relative to the Markdown file, not the current directory
+   ```yaml
+   image:
+     file: ./images/cover.jpg  # Relative to article.md location
+   ```
+
+2. **Check file exists**: Verify the file path is correct
+   ```bash
+   ls -la ./images/cover.jpg
+   ```
+
+#### Idempotent Publishing with Hash
+
+**Behavior**: When `image.file`, `image.url`, and `image.hash` all exist in frontmatter:
+- Hash is computed from the processed image file
+- If computed hash matches `image.hash`, upload is **skipped** and existing `image.url` is reused
+- If hash differs, image is re-uploaded and frontmatter updated with new hash/url
+
+**Example frontmatter after first publish**:
+```yaml
+image:
+  file: ./images/cover.jpg
+  url: https://cdn.example.com/abc123...jpg
+  hash: abc123def456...
+```
+
+On second publish with same image file, upload is skipped automatically.
+
+#### Blossom Upload Timeout
+
+**Symptom**: Upload to Blossom server times out
+
+**Solutions**:
+1. **Increase timeout**:
+   ```bash
+   nostr-publish article.md --blossom https://blossom.example.com --blossom-timeout 60
+   ```
+
+2. **Check Blossom server**: Ensure the server is reachable and accepting uploads
+
+3. **Check image size**: Large images may take longer to upload
+
+#### Emacs Buffer Not Updated After Publish
+
+**Symptom**: After successful publish with `image.file`, the buffer doesn't show `hash` and `url`
+
+**Causes & Solutions**:
+
+1. **Publish failed**: Check the message in the echo area - if it shows "Publish failed:", the CLI failed and no update occurs
+
+2. **No image.file**: Buffer write-back only happens when publishing with `image.file`
+
+3. **Missing image block**: The frontmatter must have an `image:` block (object format, not string)
+   ```yaml
+   # Correct - buffer will be updated
+   image:
+     file: ./cover.jpg
+
+   # Incorrect - no buffer update (string format)
+   image: https://example.com/cover.jpg
+   ```
+
+4. **Buffer changed during publish**: If you switch buffers during publish, the update is skipped
 
 ## Emacs Integration Issues
 

@@ -8,6 +8,7 @@ Complete guide for setting up nostr-publish from source and running against a lo
 - **Docker and Docker Compose** for local relay and signer
 - **[nak](https://github.com/fiatjaf/nak)** CLI tool (v0.17.4+)
 - **Emacs 27.1+** (for Emacs integration)
+- **envsubst** (typically included with `gettext` package)
 
 ## Install from Source
 
@@ -31,45 +32,60 @@ uv run nostr-publish --help
 
 ## Local Test Stack
 
-The test stack provides a local Nostr relay and NIP-46 signer for development and testing without needing a mobile signer app.
+The test stack provides a local Nostr relay, NIP-46 signer, and Blossom media server for development and testing without needing a mobile signer app.
+
+### Configuration
+
+Port configuration is managed via environment variables. Create a `.env` file from the example:
+
+```bash
+cp .env.example .env
+```
+
+Available variables (with defaults):
+
+| Variable                     | Default | Description          |
+|------------------------------|---------|----------------------|
+| `NOSTR_PUBLISH_RELAY_PORT`   | 8080    | Relay WebSocket port |
+| `NOSTR_PUBLISH_BLOSSOM_PORT` | 3000    | Blossom HTTP port    |
+
+The Makefile and test suite automatically load these values.
 
 ### Start the Stack
 
 ```bash
-cd tests/integration
-docker compose up -d
+make stack-up
 ```
 
 This starts:
-- **nostr-rs-relay** on `ws://localhost:8081` - local Nostr relay
+- **nostr-rs-relay** on `ws://localhost:${NOSTR_PUBLISH_RELAY_PORT}` (default: 8080)
 - **nak bunker** - NIP-46 remote signer with test keys
+- **blossom** on `http://localhost:${NOSTR_PUBLISH_BLOSSOM_PORT}` (default: 3000)
 
 ### Test Stack Credentials
 
-The local signer uses fixed test keys:
+The local signer uses fixed test keys. With default ports:
 
 | Component     | Value                                                                                                         |
 |---------------|---------------------------------------------------------------------------------------------------------------|
-| Bunker URI    | `bunker://79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798?relay=ws%3A%2F%2Flocalhost%3A8081` |
-| Relay URL     | `ws://localhost:8081`                                                                                         |
+| Bunker URI    | `bunker://79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798?relay=ws%3A%2F%2Flocalhost%3A8080` |
+| Relay URL     | `ws://localhost:8080`                                                                                         |
+| Blossom URL   | `http://localhost:3000`                                                                                       |
 | Client Secret | `0000000000000000000000000000000000000000000000000000000000000002`                                            |
+
+If you change the relay port, update the `relay=` parameter in the bunker URI accordingly (URL-encoded).
 
 ### Stop the Stack
 
 ```bash
-cd tests/integration
-docker compose down
+make stack-down
 ```
 
-To remove volumes and start fresh:
-
-```bash
-docker compose down -v
-```
+This also removes volumes to start fresh.
 
 ## CLI Usage with Local Stack
 
-Test publishing against the local stack:
+Test publishing against the local stack (using default ports):
 
 ```bash
 # Set environment variable for client authentication
@@ -77,20 +93,18 @@ export NOSTR_CLIENT_KEY=00000000000000000000000000000000000000000000000000000000
 
 # Publish a test article
 uv run nostr-publish your-article.md \
-  --bunker "bunker://79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798?relay=ws%3A%2F%2Flocalhost%3A8081" \
-  --relay ws://localhost:8081
+  --bunker "bunker://79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798?relay=ws%3A%2F%2Flocalhost%3A8080" \
+  --relay ws://localhost:8080
 
 # Dry run (validate without publishing)
-uv run nostr-publish your-article.md \
-  --relay ws://localhost:8081 \
-  --dry-run
+make dry-run
 ```
 
-Verify published events:
+Verify published events (adjust port if changed):
 
 ```bash
 # Fetch recent long-form content from local relay
-nak req -k 30023 -l 5 ws://localhost:8081
+nak req -k 30023 -l 5 ws://localhost:8080
 ```
 
 ## Emacs Setup with Local Source
@@ -105,11 +119,14 @@ Configure Emacs to use your local checkout:
 ;; Enable nostr-publish-mode in markdown buffers (activates C-c C-p binding)
 (add-hook 'markdown-mode-hook #'nostr-publish-mode)
 
-;; Configure for local test stack
+;; Configure for local test stack (adjust ports if using custom .env)
 (setq nostr-publish-bunker-uri
-      "bunker://79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798?relay=ws%3A%2F%2Flocalhost%3A8081")
-(setq nostr-publish-default-relays '("ws://localhost:8081"))
+      "bunker://79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798?relay=ws%3A%2F%2Flocalhost%3A8080")
+(setq nostr-publish-default-relays '("ws://localhost:8080"))
 (setq nostr-publish-timeout 60)
+
+;; Optional: Blossom server for cover image uploads (required if using cover.file)
+(setq nostr-publish-blossom-url "http://localhost:3000")
 
 ;; Required: set client key for bunker authentication
 (setenv "NOSTR_CLIENT_KEY" "0000000000000000000000000000000000000000000000000000000000000002")
@@ -125,9 +142,10 @@ Or with `use-package`:
   (setenv "NOSTR_CLIENT_KEY" "0000000000000000000000000000000000000000000000000000000000000002")
   :custom
   (nostr-publish-bunker-uri
-   "bunker://79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798?relay=ws%3A%2F%2Flocalhost%3A8081")
-  (nostr-publish-default-relays '("ws://localhost:8081"))
-  (nostr-publish-timeout 60))
+   "bunker://79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798?relay=ws%3A%2F%2Flocalhost%3A8080")
+  (nostr-publish-default-relays '("ws://localhost:8080"))
+  (nostr-publish-timeout 60)
+  (nostr-publish-blossom-url "http://localhost:3000"))
 ```
 
 ### Interactive Testing

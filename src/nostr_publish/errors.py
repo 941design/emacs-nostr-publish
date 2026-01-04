@@ -80,3 +80,15 @@ class RelayNotInAllowlistError(NostrPublishError):
     """Frontmatter relay is not in CLI allowlist."""
 
     pass
+
+
+class ImageProcessingError(NostrPublishError):
+    """Failed to process image (EXIF stripping, resizing, etc.)."""
+
+    pass
+
+
+class BlossomUploadError(NostrPublishError):
+    """Failed to upload to Blossom server."""
+
+    pass

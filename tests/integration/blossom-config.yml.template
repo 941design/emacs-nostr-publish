@@ -1,0 +1,48 @@
+# Blossom Server Configuration for Integration Tests
+#
+# Minimal configuration for testing cover image upload workflow.
+# Uses NIP-46 (bunker) authentication for uploads.
+#
+# NOTE: This is a template. The actual blossom-config.yml is generated
+# by `make stack-up` using envsubst.
+
+# Override the domain for blob URLs to be accessible from host
+publicDomain: "http://localhost:${NOSTR_PUBLISH_BLOSSOM_PORT}"
+
+databasePath: data/sqlite.db
+
+dashboard:
+  enabled: false
+
+discovery:
+  nostr:
+    enabled: false
+  upstream:
+    enabled: false
+
+storage:
+  backend: local
+  removeWhenNoOwners: false
+  local:
+    dir: ./data/blobs
+
+  # Keep blobs for testing duration
+  rules:
+    - type: "*"
+      expiration: 1 day
+
+upload:
+  enabled: true
+  # Require NIP-46 authentication (bunker_uri)
+  requireAuth: true
+  requirePubkeyInRule: false
+
+media:
+  enabled: false
+
+list:
+  requireAuth: false
+  allowListOthers: true
+
+tor:
+  enabled: false

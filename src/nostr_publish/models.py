@@ -8,6 +8,27 @@ from typing import Optional
 
 
 @dataclass
+class ImageMetadata:
+    """Validated image metadata for NIP-92 imeta tag.
+
+    Represents cover/preview image metadata extracted from frontmatter.
+    All fields validated per NIP-92 specification.
+
+    Extended for NIP-92 Blossom support:
+    - file: local file path (mutually exclusive with url when specified)
+    - hash: Blossom blob identifier after upload
+    - url and file are mutually exclusive (at least one required)
+    """
+
+    url: Optional[str] = None
+    mime: Optional[str] = None
+    alt: Optional[str] = None
+    dim: Optional[str] = None
+    file: Optional[str] = None
+    hash: Optional[str] = None
+
+
+@dataclass
 class Frontmatter:
     """Parsed and validated frontmatter from Markdown file.
 
@@ -20,6 +41,8 @@ class Frontmatter:
     published_at: Optional[int] = None
     tags: list[str] = field(default_factory=list)
     relays: list[str] = field(default_factory=list)
+    image: Optional[ImageMetadata] = None
+    naddr: Optional[str] = None
 
     def __post_init__(self):
         """Ensure mutable defaults are instance-specific."""
@@ -52,3 +75,4 @@ class PublishResult:
 
     event_id: str
     pubkey: str
+    naddr: Optional[str] = None

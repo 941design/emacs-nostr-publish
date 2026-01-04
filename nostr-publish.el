@@ -60,6 +60,13 @@ be a subset of this list."
   :type 'integer
   :group 'nostr-publish)
 
+(defcustom nostr-publish-blossom-url nil
+  "Blossom server HTTP base URL for cover image uploads.
+If nil and frontmatter has image.file, an error will occur."
+  :type '(choice (const :tag "None" nil)
+                 (string :tag "Blossom URL"))
+  :group 'nostr-publish)
+
 (defun nostr-publish--check-cli ()
   "Check if nostr-publish CLI is available, warn if not."
   (unless (executable-find nostr-publish-cli-command)
@@ -152,6 +159,8 @@ CONTRACT:
       (dolist (relay nostr-publish-default-relays)
         (setq args (append args (list "--relay" relay))))
       (setq args (append args (list "--timeout" (number-to-string nostr-publish-timeout))))
+      (when nostr-publish-blossom-url
+        (setq args (append args (list "--blossom" nostr-publish-blossom-url))))
 
       ;; Step 4 & 5: Invoke CLI and handle result
       (nostr-publish--invoke-cli args))))
@@ -162,6 +171,7 @@ ARGS is a list where first element is command, rest are arguments.
 Captures stdout/stderr and displays appropriate message."
   (let ((temp-stdout-file (make-temp-file "nostr-publish-stdout-"))
         (temp-stderr-file (make-temp-file "nostr-publish-stderr-"))
+        (target-buffer (current-buffer))  ;; Capture buffer at invocation
         (exit-code nil)
         (stdout nil)
         (stderr nil))
@@ -187,16 +197,36 @@ Captures stdout/stderr and displays appropriate message."
           ;; Handle result based on exit code
           (cond
            ((eq exit-code 0)
-            ;; Success: parse event ID and pubkey from stdout
-            (let ((event-id (nostr-publish--extract-event-id stdout))
-                  (pubkey (nostr-publish--extract-pubkey stdout)))
-              (cond
-               ((and event-id pubkey)
-                (message "Published: event ID %s, pubkey %s" event-id pubkey))
-               (event-id
-                (message "Published: event ID %s" event-id))
-               (t
-                (message "Published successfully (event ID not found in output)")))))
+            ;; Parse JSON output to extract all fields
+            (condition-case _
+                (let* ((result (json-parse-string stdout :object-type 'alist))
+                       (event-id (alist-get 'event_id result))
+                       (pubkey (alist-get 'pubkey result))
+                       (naddr (alist-get 'naddr result))
+                       (image (alist-get 'image result)))
+
+                  ;; Update image metadata if present
+                  (when image
+                    (unless (eq (current-buffer) target-buffer)
+                      (error "Buffer changed during publish operation"))
+                    (with-current-buffer target-buffer
+                      (nostr-publish--update-cover-frontmatter image)))
+
+                  ;; Update naddr if present
+                  (when naddr
+                    (unless (eq (current-buffer) target-buffer)
+                      (error "Buffer changed during publish operation"))
+                    (with-current-buffer target-buffer
+                      (nostr-publish--update-naddr-frontmatter naddr)))
+
+                  ;; Display success message
+                  (message "Published: event ID %s, pubkey %s%s"
+                           event-id pubkey
+                           (if naddr (format ", naddr %s" naddr) "")))
+
+              ;; If JSON parsing fails, display message without metadata
+              (error
+               (message "Published successfully (could not parse JSON output)"))))
            (t
             ;; Failure: display error from stderr
             (let ((error-msg (string-trim (or stderr "Unknown error"))))
@@ -205,35 +235,197 @@ Captures stdout/stderr and displays appropriate message."
       (ignore-errors (delete-file temp-stdout-file))
       (ignore-errors (delete-file temp-stderr-file)))))
 
-(defun nostr-publish--extract-event-id (output)
-  "Extract event ID from CLI output.
-Returns the event ID if found, nil otherwise.
-Looks for patterns like \"Published: <hex>\", \"event ID: <hex>\", or \"ID: <hex>\"."
-  (cond
-   ;; Match "Published:" followed by hex event ID (primary CLI output format)
-   ((string-match (rx "Published:" (+ space) (group (+ hex-digit)))
-                  output)
-    (match-string 1 output))
-   ;; Match "event id:" or "event ID:" (case insensitive)
-   ((string-match (rx "event" (+ space) (or "id" "ID" "Id" "iD")
-                      ":" (+ space)
-                      (group (+ hex-digit)))
-                  output)
-    (match-string 1 output))
-   ;; Match standalone "ID:" or "id:" (case insensitive)
-   ((string-match (rx (or "ID" "id" "Id" "iD") ":" (+ space)
-                      (group (+ hex-digit)))
-                  output)
-    (match-string 1 output))
-   (t nil)))
+(defun nostr-publish--sanitize-yaml-value (value)
+  "Sanitize VALUE for safe insertion into YAML frontmatter.
+Removes newlines and YAML structural characters to prevent injection.
+Defense-in-depth: Python validation already prevents these, but this
+provides additional safety layer."
+  (when value
+    (let ((sanitized value))
+      ;; Remove newlines (both Unix and Windows style)
+      (setq sanitized (replace-regexp-in-string "[\n\r]" "" sanitized))
+      ;; Remove YAML structural characters that could break parsing
+      (setq sanitized (replace-regexp-in-string "[][{}]" "" sanitized))
+      sanitized)))
 
-(defun nostr-publish--extract-pubkey (output)
-  "Extract pubkey from CLI output.
-Returns the pubkey if found, nil otherwise.
-Looks for pattern \"Pubkey: <hex>\"."
-  (when (string-match (rx "Pubkey:" (+ space) (group (+ hex-digit)))
-                      output)
-    (match-string 1 output)))
+(defun nostr-publish--update-naddr-frontmatter (naddr)
+  "Update current buffer's YAML frontmatter with naddr field.
+NADDR is NIP-19 encoded string (e.g., \"naddr1qqxnzd3cxsmnjv3hx56rjwf3...\").
+
+Updates or inserts \"naddr:\" field in frontmatter at top-level.
+Preserves all other frontmatter fields.
+Marks buffer as modified and saves it.
+
+Signals error if frontmatter delimiters not found.
+
+Atomic guarantee: Either all changes are applied and saved, or all
+changes are rolled back on error (via undo mechanism).
+
+CONTRACT:
+  Inputs:
+    - naddr: string, NIP-19 encoded naddr value
+
+  Outputs:
+    - None (updates buffer in-place)
+
+  Invariants:
+    - Updates current buffer's YAML frontmatter
+    - Adds or updates \"naddr\" field at frontmatter top-level
+    - Preserves all other frontmatter fields
+    - Saves buffer after update
+    - Atomic: either all changes applied and saved, or all rolled back
+
+  Properties:
+    - Idempotent: updating with same naddr multiple times produces same result
+    - Fail-safe: errors during update trigger rollback via undo mechanism
+
+  Algorithm:
+    1. Locate frontmatter delimiters (--- ... ---)
+    2. Check if \"naddr:\" field already exists:
+       a. If exists: update value in place
+       b. If not exists: insert new \"naddr: <value>\" line after slug field
+    3. Mark buffer as modified
+    4. Save buffer"
+  (let ((undo-start buffer-undo-list)
+        (changes-made 0))
+    (condition-case err
+        (progn
+          (save-excursion
+            (goto-char (point-min))
+
+            ;; Step 1: Locate frontmatter region
+            (unless (re-search-forward "^---$" nil t)
+              (error "YAML frontmatter start delimiter not found"))
+            ;; Move to the beginning of the next line (after the newline)
+            (forward-line 1)
+            (let ((fm-start (point)))
+              (unless (re-search-forward "^---$" nil t)
+                (error "YAML frontmatter end delimiter not found"))
+              (let ((fm-end (match-beginning 0)))
+                ;; Sanitize naddr value before insertion
+                (let ((naddr-value (nostr-publish--sanitize-yaml-value naddr)))
+
+                  ;; Step 2: Check if naddr field exists and update or insert
+                  (goto-char fm-start)
+                  (if (re-search-forward "^naddr:" fm-end t)
+                      ;; Update existing naddr line
+                      (progn
+                        (beginning-of-line)
+                        (delete-region (point) (line-end-position))
+                        (insert (format "naddr: %s" naddr-value))
+                        (setq changes-made (1+ changes-made)))
+                    ;; Insert new naddr line after slug field
+                    (goto-char fm-start)
+                    (if (re-search-forward "^slug:" fm-end t)
+                        ;; Found slug field, insert after it
+                        (progn
+                          (end-of-line)
+                          (insert (format "\nnaddr: %s" naddr-value))
+                          (setq changes-made (1+ changes-made)))
+                      ;; No slug field, insert after opening delimiter
+                      ;; fm-start is after the opening ---, need to go to beginning of next line
+                      (goto-char fm-start)
+                      (insert (format "naddr: %s\n" naddr-value))
+                      (setq changes-made (1+ changes-made))))))))
+
+          ;; Step 3 & 4: Mark buffer as modified and save
+          (set-buffer-modified-p t)
+          (save-buffer))
+
+      ;; Error handler: rollback all changes
+      (error
+       (when (> changes-made 0)
+         ;; Calculate how many undo entries to roll back
+         (let ((undo-count (- (length buffer-undo-list) (length undo-start))))
+           (when (> undo-count 0)
+             (primitive-undo undo-count buffer-undo-list))))
+       ;; Re-signal the original error
+       (signal (car err) (cdr err))))))
+
+(defun nostr-publish--update-cover-frontmatter (cover-metadata)
+  "Update current buffer's YAML frontmatter with image metadata.
+COVER-METADATA is an alist with keys (hash url dim mime).
+Only hash and url are written to frontmatter; dim and mime are ignored.
+
+Updates or inserts image.hash and image.url within existing image block.
+Preserves all other frontmatter fields and image fields (file, alt, etc.).
+Marks buffer as modified and saves it.
+
+Signals error if frontmatter delimiters or image block not found.
+
+Atomic guarantee: Either all changes are applied and saved, or all
+changes are rolled back on error (via undo mechanism)."
+  ;; Capture undo state before any modifications for atomic rollback
+  (let ((undo-start buffer-undo-list)
+        (changes-made 0))
+    (condition-case err
+        (progn
+          (save-excursion
+            (goto-char (point-min))
+
+            ;; Step 1: Locate frontmatter region
+            (unless (re-search-forward "^---$" nil t)
+              (error "YAML frontmatter start delimiter not found"))
+            (let ((fm-start (point)))
+              (unless (re-search-forward "^---$" nil t)
+                (error "YAML frontmatter end delimiter not found"))
+              (let ((fm-end (match-beginning 0)))
+
+                ;; Step 2: Check if image block exists
+                (goto-char fm-start)
+                (unless (re-search-forward "^image:$" fm-end t)
+                  (error "Image block not found in frontmatter"))
+                (let ((cover-line-end (point))
+                      ;; Sanitize values before insertion (defense-in-depth)
+                      (hash-value (nostr-publish--sanitize-yaml-value
+                                   (alist-get 'hash cover-metadata)))
+                      (url-value (nostr-publish--sanitize-yaml-value
+                                  (alist-get 'url cover-metadata))))
+
+                  ;; Step 3: Update hash field
+                  (goto-char cover-line-end)
+                  (if (re-search-forward "^  hash:" fm-end t)
+                      ;; Replace existing hash line
+                      (progn
+                        (beginning-of-line)
+                        (delete-region (point) (line-end-position))
+                        (insert (format "  hash: %s" hash-value))
+                        (setq changes-made (1+ changes-made)))
+                    ;; Insert new hash line after image:
+                    (goto-char cover-line-end)
+                    (insert (format "\n  hash: %s" hash-value))
+                    (setq changes-made (1+ changes-made)))
+
+                  ;; Step 4: Update url field
+                  (goto-char cover-line-end)
+                  (if (re-search-forward "^  url:" fm-end t)
+                      ;; Replace existing url line
+                      (progn
+                        (beginning-of-line)
+                        (delete-region (point) (line-end-position))
+                        (insert (format "  url: %s" url-value))
+                        (setq changes-made (1+ changes-made)))
+                    ;; Insert new url line
+                    ;; Find the hash line we just created/updated
+                    (goto-char cover-line-end)
+                    (re-search-forward "^  hash:" fm-end t)
+                    (end-of-line)
+                    (insert (format "\n  url: %s" url-value))
+                    (setq changes-made (1+ changes-made)))))))
+
+          ;; Step 5 & 6: Mark buffer as modified and save
+          (set-buffer-modified-p t)
+          (save-buffer))
+
+      ;; Error handler: rollback all changes
+      (error
+       (when (> changes-made 0)
+         ;; Calculate how many undo entries to roll back
+         (let ((undo-count (- (length buffer-undo-list) (length undo-start))))
+           (when (> undo-count 0)
+             (primitive-undo undo-count buffer-undo-list))))
+       ;; Re-signal the original error
+       (signal (car err) (cdr err))))))
 
 ;;;###autoload
 (define-minor-mode nostr-publish-mode

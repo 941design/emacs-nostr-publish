@@ -4,6 +4,7 @@ Tests cover argument parsing, file reading, and workflow orchestration
 with determinism, error handling, and fail-fast semantics.
 """
 
+import json
 import tempfile
 from pathlib import Path
 from unittest.mock import Mock, patch
@@ -307,7 +308,17 @@ class TestParseArgumentsComprehensive:
         argv = ["test.md", "--relay", "wss://relay.example.com"]
         result = parse_arguments(argv)
 
-        required_keys = {"file", "bunker_uri", "relays", "dry_run", "timeout"}
+        required_keys = {
+            "file",
+            "bunker_uri",
+            "relays",
+            "dry_run",
+            "timeout",
+            "blossom_url",
+            "blossom_timeout",
+            "cover_size",
+            "allow_dry_run_without_upload",
+        }
         assert set(result.keys()) == required_keys
 
 
@@ -410,12 +421,16 @@ class TestMainReturnCodes:
             "relays": ["wss://relay.example"],
             "dry_run": False,
             "timeout": 30,
+            "blossom_url": None,
+            "blossom_timeout": 30,
+            "cover_size": "1200x630",
         }
         mock_read_file.return_value = "---\ntitle: test\nslug: test\n---\nBody"
         mock_parse_fm.return_value = ({"title": "test", "slug": "test"}, "Body")
 
         fm_obj = Mock()
         fm_obj.relays = []
+        fm_obj.image = None  # No cover image
         mock_dict_to_fm.return_value = fm_obj
         mock_validate_fm.return_value = fm_obj
 
@@ -425,10 +440,13 @@ class TestMainReturnCodes:
 
         mock_resolve_relays.return_value = ["wss://relay.example"]
 
+        fm_obj.slug = "test"  # Add slug for naddr encoding
+
         with patch("nostr_publish.cli.invoke_nak") as mock_nak:
             result_obj = Mock()
             result_obj.event_id = "123"
-            result_obj.pubkey = "456"
+            result_obj.pubkey = "0" * 64  # Valid 64-char hex pubkey for naddr encoding
+            result_obj.naddr = None  # Will be set by encode_naddr
             mock_nak.return_value = result_obj
             with patch("builtins.print"):
                 result = main([])
@@ -449,7 +467,7 @@ class TestMainReturnCodes:
                             with patch("nostr_publish.cli.construct_event") as mock_construct:
                                 with patch("nostr_publish.cli.resolve_relays") as mock_resolve:
                                     mock_parse.return_value = ({"title": "Test", "slug": "test-slug"}, "# Body\n")
-                                    mock_fm = Mock(relays=[])
+                                    mock_fm = Mock(relays=[], image=None)  # No cover image
                                     mock_dict_to_fm.return_value = mock_fm
                                     mock_validate.return_value = mock_fm
                                     mock_construct.return_value = Mock(to_dict=Mock(return_value={}))
@@ -567,7 +585,7 @@ class TestMainNoBunkerPublishFails:
                             with patch("nostr_publish.cli.construct_event") as mock_construct:
                                 with patch("nostr_publish.cli.resolve_relays") as mock_resolve:
                                     mock_parse.return_value = ({"title": "Test", "slug": "test-slug"}, "# Body\n")
-                                    mock_fm = Mock(relays=["wss://relay.example"])
+                                    mock_fm = Mock(relays=["wss://relay.example"], image=None)  # No cover image
                                     mock_dict_to_fm.return_value = mock_fm
                                     mock_validate.return_value = mock_fm
                                     mock_construct.return_value = Mock(to_dict=Mock(return_value={}))
@@ -680,6 +698,188 @@ class TestReadMarkdownFileEdgeCases:
             temp_path.unlink()
 
 
+class TestCoverMetadataOutput:
+    """Test CLI cover metadata output to stdout."""
+
+    def test_cli_outputs_cover_when_metadata_present(self):
+        """CLI outputs Cover: line when cover_metadata returned from orchestrate_cover_upload."""
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".md", delete=False, encoding="utf-8") as f:
+            f.write("---\ntitle: Test\nslug: test-slug\nimage:\n  file: /tmp/test.jpg\n---\n# Body\n")
+            temp_path = f.name
+
+        try:
+            sample_metadata = {
+                "hash": "a" * 64,
+                "url": "https://blossom.example.com/abc123.jpg",
+                "dim": "1200x630",
+                "mime": "image/jpeg",
+            }
+
+            with patch("nostr_publish.validator.validate_image_metadata") as mock_validate_img:
+                # Make validate_image_metadata pass through the ImageMetadata unchanged
+                mock_validate_img.side_effect = lambda img, *args, **kwargs: img
+
+                with patch("nostr_publish.cli.validate_cover_arguments"):
+                    with patch("nostr_publish.cli.orchestrate_cover_upload") as mock_upload:
+                        with patch("nostr_publish.cli.invoke_nak") as mock_nak:
+                            mock_upload.return_value = sample_metadata
+                            result_obj = Mock()
+                            result_obj.event_id = "event123"
+                            result_obj.pubkey = "0" * 64  # Valid 64-char hex pubkey
+                            result_obj.naddr = None  # Will be set by encode_naddr
+                            mock_nak.return_value = result_obj
+
+                            from io import StringIO
+
+                            captured_output = StringIO()
+                            with patch("sys.stdout", captured_output):
+                                result = main(
+                                    [
+                                        temp_path,
+                                        "--relay",
+                                        "wss://relay.example.com",
+                                        "--bunker",
+                                        "bunker://test@wss://r.example.com",
+                                        "--blossom",
+                                        "https://blossom.example.com",
+                                    ]
+                                )
+
+            assert result == 0
+            output = captured_output.getvalue().strip()
+
+            # New JSON format - parse and verify
+            output_json = json.loads(output)
+
+            # Verify required fields
+            assert "event_id" in output_json
+            assert "pubkey" in output_json
+            assert output_json["event_id"] == "event123"
+            assert output_json["pubkey"] == "0" * 64
+
+            # Verify cover metadata included
+            assert "image" in output_json
+            cover_json = output_json["image"]
+            assert set(cover_json.keys()) == {"hash", "url", "dim", "mime"}
+            assert cover_json["hash"] == sample_metadata["hash"]
+            assert cover_json["url"] == sample_metadata["url"]
+            assert cover_json["dim"] == sample_metadata["dim"]
+            assert cover_json["mime"] == sample_metadata["mime"]
+
+            # Note: naddr may or may not be present (encoding can fail non-fatally)
+            # Just verify output is valid JSON with required fields
+        finally:
+            Path(temp_path).unlink()
+
+    def test_cli_omits_cover_when_no_metadata(self):
+        """CLI does NOT output cover field in JSON when no cover upload occurred."""
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".md", delete=False, encoding="utf-8") as f:
+            f.write("---\ntitle: Test\nslug: test-slug\n---\n# Body\n")
+            temp_path = f.name
+
+        try:
+            with patch("nostr_publish.cli.invoke_nak") as mock_nak:
+                result_obj = Mock()
+                result_obj.event_id = "event123"
+                result_obj.pubkey = "0" * 64  # Valid 64-char hex pubkey
+                result_obj.naddr = None  # Will be set by encode_naddr
+                mock_nak.return_value = result_obj
+
+                from io import StringIO
+
+                captured_output = StringIO()
+                with patch("sys.stdout", captured_output):
+                    result = main(
+                        [
+                            temp_path,
+                            "--relay",
+                            "wss://relay.example.com",
+                            "--bunker",
+                            "bunker://test@wss://r.example.com",
+                        ]
+                    )
+
+            assert result == 0
+            output = captured_output.getvalue().strip()
+
+            # New JSON format - parse and verify
+            output_json = json.loads(output)
+
+            # Verify NO cover field in JSON
+            assert "image" not in output_json
+
+            # Verify required fields present
+            assert "event_id" in output_json
+            assert "pubkey" in output_json
+            assert output_json["event_id"] == "event123"
+            assert output_json["pubkey"] == "0" * 64
+
+            # Note: naddr may or may not be present (encoding can fail non-fatally)
+        finally:
+            Path(temp_path).unlink()
+
+    @given(
+        hash_val=st.text(alphabet="0123456789abcdef", min_size=64, max_size=64),
+        url=st.from_regex(r"https://[a-z0-9.-]+/[a-z0-9]+\.(jpg|png)", fullmatch=True),
+        dim=st.from_regex(r"[1-9][0-9]{2,3}x[1-9][0-9]{2,3}", fullmatch=True),
+    )
+    def test_cover_output_deterministic(self, hash_val: str, url: str, dim: str):
+        """Cover output is deterministic for same metadata."""
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".md", delete=False, encoding="utf-8") as f:
+            f.write("---\ntitle: Test\nslug: test-slug\nimage:\n  file: /tmp/test.jpg\n---\n# Body\n")
+            temp_path = f.name
+
+        try:
+            metadata = {"hash": hash_val, "url": url, "dim": dim, "mime": "image/jpeg"}
+
+            outputs = []
+            for _ in range(2):
+                with patch("nostr_publish.validator.validate_image_metadata") as mock_validate_img:
+                    mock_validate_img.side_effect = lambda img, *args, **kwargs: img
+
+                    with patch("nostr_publish.cli.validate_cover_arguments"):
+                        with patch("nostr_publish.cli.orchestrate_cover_upload") as mock_upload:
+                            with patch("nostr_publish.cli.invoke_nak") as mock_nak:
+                                mock_upload.return_value = metadata
+                                result_obj = Mock()
+                                result_obj.event_id = "event123"
+                                result_obj.pubkey = "0" * 64  # Valid 64-char hex pubkey
+                                result_obj.naddr = None  # Will be set by encode_naddr
+                                mock_nak.return_value = result_obj
+
+                                from io import StringIO
+
+                                captured_output = StringIO()
+                                with patch("sys.stdout", captured_output):
+                                    main(
+                                        [
+                                            temp_path,
+                                            "--relay",
+                                            "wss://relay.example.com",
+                                            "--bunker",
+                                            "bunker://test@wss://r.example.com",
+                                            "--blossom",
+                                            "https://blossom.example.com",
+                                        ]
+                                    )
+
+                # New JSON format - capture entire output
+                output = captured_output.getvalue().strip()
+                outputs.append(output)
+
+            # Verify deterministic output
+            assert outputs[0] == outputs[1]
+
+            # Verify JSON is stable and contains cover
+            parsed = json.loads(outputs[0])
+            assert "image" in parsed
+            assert parsed["image"]["hash"] == hash_val
+            assert parsed["image"]["url"] == url
+            assert parsed["image"]["dim"] == dim
+        finally:
+            Path(temp_path).unlink()
+
+
 class TestRelayResolution:
     """Test relay resolution and allowlist logic."""
 
@@ -702,7 +902,17 @@ Body content"""
 
             def capture_relays(event, bunker_uri, relays, timeout):
                 captured_relays.append(relays)
-                return type("NakResult", (), {"event_id": "abc123", "pubkey": "pub123"})()
+                # Return proper result object with naddr attribute
+                result_obj = type(
+                    "NakResult",
+                    (),
+                    {
+                        "event_id": "abc123",
+                        "pubkey": "0" * 64,  # Valid 64-char hex pubkey
+                        "naddr": None,  # Will be set by encode_naddr
+                    },
+                )()
+                return result_obj
 
             with patch("nostr_publish.cli.invoke_nak", side_effect=capture_relays):
                 # CLI must include frontmatter relay in allowlist

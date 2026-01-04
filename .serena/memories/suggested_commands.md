@@ -3,19 +3,29 @@
 ## Package Management (ALWAYS use uv)
 ```bash
 make sync-dev          # Sync venv with dev dependencies (recommended)
+make sync              # Sync venv with production dependencies only
 uv sync --extra dev    # Manual equivalent
 ```
 
 ## Testing
 ```bash
-make test              # Run ALL tests (unit + integration)
+make test              # Run ALL tests (unit + integration + emacs)
 make test-unit         # Run unit tests only (fast, no Docker)
-make test-e2e          # Run integration tests only (requires Docker, nak, Emacs)
+make test-e2e          # Run integration tests only (requires Docker, nak)
+make test-emacs        # Run all Emacs tests (compile + unit)
+make test-emacs-compile # Byte-compile Emacs Lisp files
+make test-emacs-unit   # Run Emacs ERT unit tests
 
 # Direct pytest (only runs unit tests due to pyproject.toml config)
 uv run pytest          # Unit tests only
 uv run pytest -v       # Verbose output
 uv run pytest -k name  # Run specific test by name pattern
+```
+
+## Docker Test Stack
+```bash
+make stack-up          # Start local test stack (relay + signer + blossom)
+make stack-down        # Stop local test stack and remove volumes
 ```
 
 ## Linting & Formatting
@@ -36,6 +46,7 @@ uv run ruff format --check src/ tests/
 make build             # Build distribution packages
 make install           # Install CLI globally via uv tool
 make clean             # Remove build artifacts
+make clean-emacs       # Clean Emacs byte-compiled files
 ```
 
 ## Publishing

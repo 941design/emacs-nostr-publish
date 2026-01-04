@@ -8,6 +8,7 @@ from typing import Optional
 import yaml
 
 from .errors import FrontmatterParseError
+from .image_metadata import parse_image_field
 from .models import Frontmatter
 
 
@@ -116,8 +117,10 @@ def dict_to_frontmatter(frontmatter_dict: dict) -> Frontmatter:
            - published_at: integer or None
            - tags: list of strings or None
            - relays: list of strings or None
-        2. Create Frontmatter instance with extracted values
-        3. Return Frontmatter instance
+           - image: string, dict, or None (formerly "cover")
+        2. Parse image field to ImageMetadata using parse_image_field()
+        3. Create Frontmatter instance with extracted values
+        4. Return Frontmatter instance
 
       Note: Validation of field values is deferred to FrontmatterValidator.
     """
@@ -138,4 +141,10 @@ def dict_to_frontmatter(frontmatter_dict: dict) -> Frontmatter:
     else:
         relays = list(relays)
 
-    return Frontmatter(title=title, slug=slug, summary=summary, published_at=published_at, tags=tags, relays=relays)
+    # Extract image field (formerly "cover")
+    image_value = frontmatter_dict.get("image")
+    image = parse_image_field(image_value)
+
+    return Frontmatter(
+        title=title, slug=slug, summary=summary, published_at=published_at, tags=tags, relays=relays, image=image
+    )

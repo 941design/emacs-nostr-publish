@@ -413,3 +413,194 @@ Article body here."""
         _, parsed_body = parse_frontmatter(content)
         expected = body_content if not body_content.startswith("\n") else body_content[1:]
         assert parsed_body == expected
+
+
+class TestDictToFrontmatterImageField:
+    """Property-based tests for cover field handling in dict_to_frontmatter."""
+
+    def test_dict_without_cover_field_results_in_none_image(self):
+        """Dictionary without cover field results in image=None."""
+        data = {"title": "Test", "slug": "test"}
+        fm = dict_to_frontmatter(data)
+        assert fm.image is None
+
+    def test_dict_with_cover_string_field(self):
+        """Dictionary with 'cover' string field parses to ImageMetadata."""
+        data = {"title": "Test", "slug": "test", "image": "https://example.com/cover.jpg"}
+        fm = dict_to_frontmatter(data)
+        assert fm.image is not None
+        assert fm.image.url == "https://example.com/cover.jpg"
+        assert fm.image.mime is None
+        assert fm.image.alt is None
+        assert fm.image.dim is None
+
+    def test_dict_with_cover_dict_field_all_properties(self):
+        """Dictionary with 'cover' dict field containing all properties."""
+        data = {
+            "title": "Test",
+            "slug": "test",
+            "image": {
+                "url": "https://example.com/cover.jpg",
+                "mime": "image/jpeg",
+                "alt": "Test image",
+                "dim": "1920x1080",
+            },
+        }
+        fm = dict_to_frontmatter(data)
+        assert fm.image is not None
+        assert fm.image.url == "https://example.com/cover.jpg"
+        assert fm.image.mime == "image/jpeg"
+        assert fm.image.alt == "Test image"
+        assert fm.image.dim == "1920x1080"
+
+    def test_dict_with_cover_dict_field_url_only(self):
+        """Dictionary with 'cover' dict containing only url."""
+        data = {"title": "Test", "slug": "test", "image": {"url": "https://example.com/cover.png"}}
+        fm = dict_to_frontmatter(data)
+        assert fm.image is not None
+        assert fm.image.url == "https://example.com/cover.png"
+        assert fm.image.mime is None
+        assert fm.image.alt is None
+        assert fm.image.dim is None
+
+    def test_backwards_compatibility_documents_without_cover_work_identically(self):
+        """Documents without cover fields work identically to before."""
+        data_old = {"title": "Test", "slug": "test", "summary": "Summary"}
+        fm = dict_to_frontmatter(data_old)
+        assert fm.title == "Test"
+        assert fm.slug == "test"
+        assert fm.summary == "Summary"
+        assert fm.image is None
+        assert fm.tags == []
+        assert fm.relays == []
+
+    def test_deterministic_same_dict_with_cover_produces_same_frontmatter(self):
+        """Same dictionary with cover always produces same Frontmatter."""
+        data = {"title": "Test", "slug": "test", "image": "https://example.com/cover.jpg"}
+        fm1 = dict_to_frontmatter(data)
+        fm2 = dict_to_frontmatter(data)
+        assert fm1.image.url == fm2.image.url
+        assert fm1.image.mime == fm2.image.mime
+        assert fm1.image.alt == fm2.image.alt
+        assert fm1.image.dim == fm2.image.dim
+
+    def test_deterministic_dict_with_cover_dict(self):
+        """Same dictionary with cover dict always produces same result."""
+        data = {
+            "title": "Test",
+            "slug": "test",
+            "image": {"url": "https://example.com/cover.jpg", "mime": "image/jpeg", "alt": "Test"},
+        }
+        fm1 = dict_to_frontmatter(data)
+        fm2 = dict_to_frontmatter(data)
+        assert fm1.image.url == fm2.image.url
+        assert fm1.image.mime == fm2.image.mime
+        assert fm1.image.alt == fm2.image.alt
+
+    def test_none_cover_field_explicitly_set(self):
+        """Explicit None for cover field results in None image."""
+        data = {"title": "Test", "slug": "test", "image": None}
+        fm = dict_to_frontmatter(data)
+        assert fm.image is None
+
+    @given(st.text(min_size=1, max_size=200))
+    def test_cover_string_field_preserved_exactly(self, url_text):
+        """Cover string field value preserved exactly as URL."""
+        assume("---" not in url_text)
+        data = {"title": "Test", "slug": "test", "image": url_text}
+        fm = dict_to_frontmatter(data)
+        assert fm.image is not None
+        assert fm.image.url == url_text
+
+    @given(st.fixed_dictionaries({"url": st.text(min_size=1, max_size=200)}).filter(lambda d: "---" not in d["url"]))
+    def test_cover_dict_url_extracted_exactly(self, cover_dict):
+        """URL from cover dict extracted exactly."""
+        data = {"title": "Test", "slug": "test", "image": cover_dict}
+        fm = dict_to_frontmatter(data)
+        assert fm.image is not None
+        assert fm.image.url == cover_dict["url"]
+
+    def test_cover_dict_with_extra_keys_ignored(self):
+        """Extra keys in cover dict are ignored."""
+        data = {
+            "title": "Test",
+            "slug": "test",
+            "image": {"url": "https://example.com/cover.jpg", "extra_key": "should be ignored"},
+        }
+        fm = dict_to_frontmatter(data)
+        assert fm.image is not None
+        assert fm.image.url == "https://example.com/cover.jpg"
+        assert not hasattr(fm.image, "extra_key")
+
+    def test_full_frontmatter_with_all_fields_including_cover_string(self):
+        """Full frontmatter with all fields including cover string."""
+        data = {
+            "title": "Test Article",
+            "slug": "test-article",
+            "summary": "Summary",
+            "published_at": 1700000000,
+            "tags": ["tag1", "tag2"],
+            "relays": ["wss://relay1"],
+            "image": "https://example.com/cover.jpg",
+        }
+        fm = dict_to_frontmatter(data)
+        assert fm.title == "Test Article"
+        assert fm.slug == "test-article"
+        assert fm.summary == "Summary"
+        assert fm.published_at == 1700000000
+        assert fm.tags == ["tag1", "tag2"]
+        assert fm.relays == ["wss://relay1"]
+        assert fm.image is not None
+        assert fm.image.url == "https://example.com/cover.jpg"
+
+    def test_full_frontmatter_with_all_fields_including_cover_dict(self):
+        """Full frontmatter with all fields including cover dict."""
+        data = {
+            "title": "Test Article",
+            "slug": "test-article",
+            "summary": "Summary",
+            "published_at": 1700000000,
+            "tags": ["tag1", "tag2"],
+            "relays": ["wss://relay1"],
+            "image": {"url": "https://example.com/cover.jpg", "mime": "image/jpeg", "alt": "Test", "dim": "1920x1080"},
+        }
+        fm = dict_to_frontmatter(data)
+        assert fm.title == "Test Article"
+        assert fm.image is not None
+        assert fm.image.url == "https://example.com/cover.jpg"
+        assert fm.image.mime == "image/jpeg"
+        assert fm.image.alt == "Test"
+        assert fm.image.dim == "1920x1080"
+
+    def test_parse_then_convert_with_cover_string(self):
+        """parse_frontmatter -> dict_to_frontmatter preserves image string."""
+        content = """---
+title: Test
+slug: test
+image: https://example.com/cover.jpg
+---
+Body"""
+        parsed_dict, _ = parse_frontmatter(content)
+        fm = dict_to_frontmatter(parsed_dict)
+        assert fm.image is not None
+        assert fm.image.url == "https://example.com/cover.jpg"
+
+    def test_parse_then_convert_with_cover_dict(self):
+        """parse_frontmatter -> dict_to_frontmatter preserves image dict."""
+        content = """---
+title: Test
+slug: test
+image:
+  url: https://example.com/cover.jpg
+  mime: image/jpeg
+  alt: Test image
+  dim: 1920x1080
+---
+Body"""
+        parsed_dict, _ = parse_frontmatter(content)
+        fm = dict_to_frontmatter(parsed_dict)
+        assert fm.image is not None
+        assert fm.image.url == "https://example.com/cover.jpg"
+        assert fm.image.mime == "image/jpeg"
+        assert fm.image.alt == "Test image"
+        assert fm.image.dim == "1920x1080"

@@ -15,7 +15,7 @@
 ;; Environment variables (must be set by caller):
 ;;   NOSTR_CLIENT_KEY - client secret key for bunker authentication
 ;;   TEST_BUNKER_URI  - bunker URI (e.g., bunker://pubkey?relay=...)
-;;   TEST_RELAY_URL   - relay URL (e.g., ws://localhost:8081)
+;;   TEST_RELAY_URL   - relay URL (e.g., ws://localhost:8080)
 ;;   TEST_FIXTURE_DIR - path to test fixtures directory
 ;;
 ;; Exit codes:
@@ -67,6 +67,100 @@ Returns the file path. File is registered for cleanup."
     value))
 
 ;;; Test Cases
+
+(defun test-emacs-e2e--test-image-writeback ()
+  "Test image upload with buffer write-back workflow.
+Creates a test article with image.file, publishes it, and verifies
+that image.hash and image.url are written back to the buffer."
+  (let* ((bunker-uri (test-emacs-e2e--get-env "TEST_BUNKER_URI"))
+         (relay-url (test-emacs-e2e--get-env "TEST_RELAY_URL"))
+         (blossom-url (test-emacs-e2e--get-env "TEST_BLOSSOM_URL"))
+         (fixture-dir (test-emacs-e2e--get-env "TEST_FIXTURE_DIR"))
+         (cover-image (expand-file-name "test-cover-with-exif.jpg" fixture-dir))
+         (test-content (format "---
+title: Image Writeback Test
+slug: image-writeback-test
+summary: Testing image upload and buffer write-back
+published_at: 1700000000
+image:
+  file: %s
+  alt: Test image
+tags:
+  - image
+  - integration
+---
+
+# Image Writeback Test
+
+This article tests the image upload and buffer write-back functionality.
+" cover-image))
+         (test-file (test-emacs-e2e--create-test-file test-content))
+         (nostr-publish-bunker-uri bunker-uri)
+         (nostr-publish-default-relays (list relay-url))
+         (nostr-publish-blossom-url blossom-url)
+         (nostr-publish-timeout 60)
+         (captured-message nil))
+
+    ;; Verify image file exists
+    (unless (file-exists-p cover-image)
+      (test-emacs-e2e--record "image-writeback" nil
+                              (format "Image file not found: %s" cover-image))
+      (cl-return-from test-emacs-e2e--test-image-writeback nil))
+
+    (cl-letf (((symbol-function 'message)
+               (lambda (fmt &rest args)
+                 (setq captured-message (apply #'format fmt args))
+                 (test-emacs-e2e--log "  message: %s" captured-message))))
+
+      (with-current-buffer (find-file-noselect test-file)
+        (unwind-protect
+            (progn
+              (nostr-publish-buffer)
+
+              ;; Check for success message
+              (unless (and captured-message
+                           (string-match "Published:" captured-message))
+                (test-emacs-e2e--record "image-writeback" nil
+                                        (or captured-message "no message captured"))
+                (cl-return-from test-emacs-e2e--test-image-writeback nil))
+
+              ;; Re-read buffer content to verify write-back
+              (revert-buffer t t t)
+              (let ((buffer-content (buffer-string)))
+                ;; Verify image block is still an object (not string)
+                (unless (string-match "^image:$" buffer-content)
+                  (test-emacs-e2e--record "image-writeback" nil
+                                          "image block not found or not an object")
+                  (cl-return-from test-emacs-e2e--test-image-writeback nil))
+
+                ;; Verify image.hash was written
+                (unless (string-match "^  hash: [a-f0-9]+" buffer-content)
+                  (test-emacs-e2e--record "image-writeback" nil
+                                          "image.hash not found in buffer")
+                  (cl-return-from test-emacs-e2e--test-image-writeback nil))
+
+                ;; Verify image.url was written
+                (unless (string-match "^  url: https?://" buffer-content)
+                  (test-emacs-e2e--record "image-writeback" nil
+                                          "image.url not found in buffer")
+                  (cl-return-from test-emacs-e2e--test-image-writeback nil))
+
+                ;; Verify image.file was preserved
+                (unless (string-match "^  file: " buffer-content)
+                  (test-emacs-e2e--record "image-writeback" nil
+                                          "image.file was removed from buffer")
+                  (cl-return-from test-emacs-e2e--test-image-writeback nil))
+
+                ;; Verify image.alt was preserved
+                (unless (string-match "^  alt: " buffer-content)
+                  (test-emacs-e2e--record "image-writeback" nil
+                                          "image.alt was removed from buffer")
+                  (cl-return-from test-emacs-e2e--test-image-writeback nil))
+
+                ;; All checks passed
+                (test-emacs-e2e--record "image-writeback" t)))
+
+          (kill-buffer))))))
 
 (defun test-emacs-e2e--test-basic-publish ()
   "Test basic article publish workflow.
@@ -214,6 +308,10 @@ Content.
                             (or (getenv "TEST_BUNKER_URI") "[NOT SET]"))
         (test-emacs-e2e--log "  TEST_RELAY_URL: %s"
                             (or (getenv "TEST_RELAY_URL") "[NOT SET]"))
+        (test-emacs-e2e--log "  TEST_BLOSSOM_URL: %s"
+                            (or (getenv "TEST_BLOSSOM_URL") "[NOT SET]"))
+        (test-emacs-e2e--log "  TEST_FIXTURE_DIR: %s"
+                            (or (getenv "TEST_FIXTURE_DIR") "[NOT SET]"))
         (test-emacs-e2e--log ""))
     (error
      (test-emacs-e2e--log "ERROR: %s" (error-message-string err))
@@ -227,7 +325,10 @@ Content.
 
         (test-emacs-e2e--test-basic-publish)
         (test-emacs-e2e--test-minimal-frontmatter)
-        (test-emacs-e2e--test-no-bunker-fails))
+        (test-emacs-e2e--test-no-bunker-fails)
+        ;; Image writeback test requires TEST_BLOSSOM_URL and TEST_FIXTURE_DIR
+        (when (and (getenv "TEST_BLOSSOM_URL") (getenv "TEST_FIXTURE_DIR"))
+          (test-emacs-e2e--test-image-writeback)))
     (error
      (test-emacs-e2e--log "ERROR during tests: %s" (error-message-string err))
      (test-emacs-e2e--cleanup)

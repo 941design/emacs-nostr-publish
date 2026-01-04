@@ -1,10 +1,10 @@
 """End-to-end integration tests for nostr-publish.
 
-Tests full publish workflow using Docker containers (relay + nak bunker).
+Tests full publish workflow using Docker containers (relay + nak bunker + blossom).
 
 CONTRACT:
   Test Environment:
-    - Docker Compose provides: relay (nostr-rs-relay) + signer (nak bunker)
+    - Docker Compose provides: relay (nostr-rs-relay) + signer (nak bunker) + blossom
     - Fixed test keypair: secret key '1', pubkey 79be667ef...
     - nak bunker communicates via relay (NIP-46), simulating real remote signer
     - Isolated relay state per test run
@@ -44,7 +44,6 @@ CONTRACT:
 
 import json
 import os
-import shutil
 import subprocess
 import time
 from pathlib import Path
@@ -52,140 +51,9 @@ from typing import Any, Optional
 
 import pytest
 
-# Constants
-DOCKER_COMPOSE_FILE = Path(__file__).parent / "docker-compose.yml"
+# Local constants (fixture-independent)
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
-RELAY_URL = "ws://localhost:8081"
-# nak bunker with secret key '1', authorized for client key '2'
-BUNKER_PUBKEY = "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798"
-# Client key '2' - authorized in bunker via --authorized-keys
-CLIENT_SECRET = "0000000000000000000000000000000000000000000000000000000000000002"
-BUNKER_URI = f"bunker://{BUNKER_PUBKEY}?relay=ws%3A%2F%2Flocalhost%3A8081"
 TEST_TIMEOUT = 60
-STARTUP_TIMEOUT = 30
-
-
-@pytest.fixture(scope="session")
-def docker_services():
-    """Start Docker Compose services for integration tests.
-
-    Provides relay and nak bunker services for end-to-end testing.
-    The nak bunker acts as a NIP-46 remote signer, communicating via the relay.
-    Detects if services are already running (e.g., started by CI) and skips restart.
-    Ensures bunker is healthy before tests run.
-    Only cleans up services if this fixture started them.
-    """
-    if not shutil.which("docker"):
-        pytest.fail("Docker not available")
-
-    if not shutil.which("nak"):
-        pytest.fail("nak not available")
-
-    compose_dir = DOCKER_COMPOSE_FILE.parent
-    we_started_services = False
-
-    def services_running():
-        """Check if both relay and bunker containers are running."""
-        try:
-            result = subprocess.run(
-                ["docker", "compose", "-f", str(DOCKER_COMPOSE_FILE), "ps", "--format", "json"],
-                cwd=compose_dir,
-                capture_output=True,
-                text=True,
-                timeout=5,
-            )
-            if result.returncode == 0 and result.stdout.strip():
-                # Check that both services are running
-                import json
-
-                services = [json.loads(line) for line in result.stdout.strip().split("\n") if line]
-                running = {s.get("Service") for s in services if s.get("State") == "running"}
-                return "relay" in running and "bunker" in running
-        except Exception:
-            pass
-        return False
-
-    def bunker_healthy():
-        """Check if bunker is ready by looking for 'listening at' in logs."""
-        try:
-            result = subprocess.run(
-                ["docker", "compose", "-f", str(DOCKER_COMPOSE_FILE), "logs", "bunker"],
-                cwd=compose_dir,
-                capture_output=True,
-                text=True,
-                timeout=5,
-            )
-            return "listening at" in result.stdout or "listening at" in result.stderr
-        except Exception:
-            return False
-
-    # Check if services are already running (e.g., started by CI)
-    if not services_running():
-        we_started_services = True
-
-        # Clean up any stale containers
-        try:
-            subprocess.run(
-                ["docker", "compose", "-f", str(DOCKER_COMPOSE_FILE), "down", "-v"],
-                cwd=compose_dir,
-                capture_output=True,
-                timeout=30,
-            )
-        except (subprocess.TimeoutExpired, FileNotFoundError):
-            pass
-
-        # Start services
-        try:
-            result = subprocess.run(
-                ["docker", "compose", "-f", str(DOCKER_COMPOSE_FILE), "up", "-d"],
-                cwd=compose_dir,
-                capture_output=True,
-                text=True,
-                timeout=60,
-            )
-            if result.returncode != 0:
-                pytest.fail(f"Failed to start Docker services: {result.stderr}")
-        except subprocess.TimeoutExpired:
-            pytest.fail("Docker Compose startup timed out")
-        except FileNotFoundError:
-            pytest.fail("docker not found")
-
-    # Wait for bunker to be healthy (not just relay)
-    deadline = time.time() + STARTUP_TIMEOUT
-    while time.time() < deadline:
-        if bunker_healthy():
-            break
-        time.sleep(2)
-    else:
-        # Timeout - get logs for debugging
-        try:
-            logs = subprocess.run(
-                ["docker", "compose", "-f", str(DOCKER_COMPOSE_FILE), "logs"],
-                cwd=compose_dir,
-                capture_output=True,
-                text=True,
-                timeout=5,
-            )
-            pytest.fail(f"Bunker failed to become healthy. Logs:\n{logs.stdout}\n{logs.stderr}")
-        except Exception:
-            pytest.fail("Bunker failed to become healthy (could not get logs)")
-
-    # Give bunker a moment to fully initialize after "listening at" appears
-    time.sleep(2)
-
-    yield
-
-    # Only tear down if we started the services
-    if we_started_services:
-        try:
-            subprocess.run(
-                ["docker", "compose", "-f", str(DOCKER_COMPOSE_FILE), "down", "-v"],
-                cwd=compose_dir,
-                capture_output=True,
-                timeout=30,
-            )
-        except Exception:
-            pass
 
 
 def run_nostr_publish(
@@ -194,6 +62,7 @@ def run_nostr_publish(
     relays: Optional[list[str]] = None,
     dry_run: bool = False,
     timeout: int = TEST_TIMEOUT,
+    client_secret: Optional[str] = None,
 ) -> subprocess.CompletedProcess:
     """Run nostr-publish CLI and return completed process."""
     cmd = ["nostr-publish", str(article_path)]
@@ -211,12 +80,29 @@ def run_nostr_publish(
     cmd.extend(["--timeout", str(timeout)])
 
     # Set NOSTR_CLIENT_KEY for nak to use the authorized client key
-    env = {**os.environ, "NOSTR_CLIENT_KEY": CLIENT_SECRET}
+    env = dict(os.environ)
+    if client_secret:
+        env["NOSTR_CLIENT_KEY"] = client_secret
 
     return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout + 10, env=env)
 
 
-def fetch_event_from_relay(event_id: str, relay_url: str = RELAY_URL) -> Optional[dict[str, Any]]:
+def parse_publish_result(stdout: str) -> dict[str, Any]:
+    """Parse JSON publish result from CLI stdout.
+
+    Returns dict with event_id, pubkey, and optionally naddr and cover.
+    """
+    stdout = stdout.strip()
+    if not stdout:
+        return {}
+
+    try:
+        return json.loads(stdout)
+    except json.JSONDecodeError:
+        return {}
+
+
+def fetch_event_from_relay(event_id: str, relay_url: str) -> Optional[dict[str, Any]]:
     """Fetch published event from relay using nak."""
     try:
         result = subprocess.run(["nak", "req", "-i", event_id, relay_url], capture_output=True, text=True, timeout=10)
@@ -285,35 +171,40 @@ def test_publish_basic_article(docker_services):
     article_path = FIXTURES_DIR / "test-article.md"
     assert article_path.exists(), f"Test fixture not found: {article_path}"
 
-    result = run_nostr_publish(article_path, bunker_uri=BUNKER_URI, relays=[RELAY_URL])
+    result = run_nostr_publish(
+        article_path,
+        bunker_uri=docker_services["bunker_uri"],
+        relays=[docker_services["relay_url"]],
+        client_secret=docker_services["client_secret"],
+    )
 
     assert result.returncode == 0, f"CLI failed: {result.stderr}"
 
-    assert "Published:" in result.stdout, "Output missing event ID"
-    assert "Pubkey:" in result.stdout, "Output missing pubkey"
+    # Parse JSON output
+    publish_result = parse_publish_result(result.stdout)
+    assert "event_id" in publish_result, "Output missing event_id"
+    assert "pubkey" in publish_result, "Output missing pubkey"
 
-    lines = result.stdout.strip().split("\n")
-    event_id = None
-    pubkey = None
-
-    for line in lines:
-        if line.startswith("Published:"):
-            event_id = line.split(":", 1)[1].strip()
-        elif line.startswith("Pubkey:"):
-            pubkey = line.split(":", 1)[1].strip()
+    event_id = publish_result["event_id"]
+    pubkey = publish_result["pubkey"]
 
     assert event_id, "Event ID not found in output"
     assert pubkey, "Pubkey not found in output"
     assert len(event_id) == 64, f"Event ID has wrong length: {len(event_id)}"
-    assert pubkey == BUNKER_PUBKEY, f"Pubkey mismatch: expected {BUNKER_PUBKEY}, got {pubkey}"
+    expected_pubkey = docker_services["bunker_pubkey"]
+    assert pubkey == expected_pubkey, f"Pubkey mismatch: expected {expected_pubkey}, got {pubkey}"
+
+    # Verify naddr is present (new field)
+    assert "naddr" in publish_result, "Output missing naddr"
+    assert publish_result["naddr"].startswith("naddr1"), "naddr should start with 'naddr1'"
 
     time.sleep(2)
 
-    event = fetch_event_from_relay(event_id)
+    event = fetch_event_from_relay(event_id, docker_services["relay_url"])
     assert event is not None, f"Event {event_id} not found in relay"
 
     assert event["kind"] == 30023, f"Wrong event kind: {event['kind']}"
-    assert event["pubkey"] == BUNKER_PUBKEY, f"Event pubkey mismatch: expected {BUNKER_PUBKEY}"
+    assert event["pubkey"] == expected_pubkey, f"Event pubkey mismatch: expected {expected_pubkey}"
 
     expected_content = """# Test Article
 
@@ -343,23 +234,25 @@ def test_publish_minimal_frontmatter(docker_services):
     article_path = FIXTURES_DIR / "minimal-article.md"
     assert article_path.exists(), f"Test fixture not found: {article_path}"
 
-    result = run_nostr_publish(article_path, bunker_uri=BUNKER_URI, relays=[RELAY_URL])
+    result = run_nostr_publish(
+        article_path,
+        bunker_uri=docker_services["bunker_uri"],
+        relays=[docker_services["relay_url"]],
+        client_secret=docker_services["client_secret"],
+    )
 
     assert result.returncode == 0, f"CLI failed: {result.stderr}"
 
-    lines = result.stdout.strip().split("\n")
-    event_id = None
+    # Parse JSON output
+    publish_result = parse_publish_result(result.stdout)
+    assert "event_id" in publish_result, "Output missing event_id"
 
-    for line in lines:
-        if line.startswith("Published:"):
-            event_id = line.split(":", 1)[1].strip()
-            break
-
+    event_id = publish_result["event_id"]
     assert event_id, "Event ID not found in output"
 
     time.sleep(2)
 
-    event = fetch_event_from_relay(event_id)
+    event = fetch_event_from_relay(event_id, docker_services["relay_url"])
     assert event is not None, f"Event {event_id} not found in relay"
 
     assert event["kind"] == 30023
@@ -388,23 +281,25 @@ def test_publish_all_fields(docker_services):
     article_path = FIXTURES_DIR / "all-fields-article.md"
     assert article_path.exists(), f"Test fixture not found: {article_path}"
 
-    result = run_nostr_publish(article_path, bunker_uri=BUNKER_URI, relays=[RELAY_URL])
+    result = run_nostr_publish(
+        article_path,
+        bunker_uri=docker_services["bunker_uri"],
+        relays=[docker_services["relay_url"]],
+        client_secret=docker_services["client_secret"],
+    )
 
     assert result.returncode == 0, f"CLI failed: {result.stderr}"
 
-    lines = result.stdout.strip().split("\n")
-    event_id = None
+    # Parse JSON output
+    publish_result = parse_publish_result(result.stdout)
+    assert "event_id" in publish_result, "Output missing event_id"
 
-    for line in lines:
-        if line.startswith("Published:"):
-            event_id = line.split(":", 1)[1].strip()
-            break
-
+    event_id = publish_result["event_id"]
     assert event_id, "Event ID not found in output"
 
     time.sleep(2)
 
-    event = fetch_event_from_relay(event_id)
+    event = fetch_event_from_relay(event_id, docker_services["relay_url"])
     assert event is not None, f"Event {event_id} not found in relay"
 
     assert event["kind"] == 30023
@@ -438,7 +333,12 @@ def test_relay_precedence(docker_services):
 
     invalid_relay = "ws://localhost:9999"
 
-    result = run_nostr_publish(article_path, bunker_uri=BUNKER_URI, relays=[invalid_relay])
+    result = run_nostr_publish(
+        article_path,
+        bunker_uri=docker_services["bunker_uri"],
+        relays=[invalid_relay],
+        client_secret=docker_services["client_secret"],
+    )
 
     assert result.returncode != 0 or "failed" in result.stdout.lower(), (
         "Expected publish to fail or report relay failures when using invalid relay"
@@ -453,7 +353,7 @@ def test_dry_run(docker_services):
     article_path = FIXTURES_DIR / "test-article.md"
 
     # CLI relay required as allowlist (frontmatter relay must match)
-    result = run_nostr_publish(article_path, relays=[RELAY_URL], dry_run=True)
+    result = run_nostr_publish(article_path, relays=[docker_services["relay_url"]], dry_run=True)
 
     assert result.returncode == 0, f"Dry-run failed: {result.stderr}"
 
@@ -475,7 +375,9 @@ def test_dry_run(docker_services):
     assert tags[0][0] == "d", "First tag should be 'd'"
     assert tags[1][0] == "title", "Second tag should be 'title'"
 
-    assert "Published:" not in result.stdout, "Dry-run should not publish (no event ID in output)"
+    # Dry-run should not output JSON with event_id (it outputs event structure, not publish result)
+    publish_result = parse_publish_result(result.stdout)
+    assert "event_id" not in publish_result, "Dry-run should not publish (no event_id in output)"
 
 
 def test_timeout(docker_services):
@@ -485,7 +387,13 @@ def test_timeout(docker_services):
     """
     article_path = FIXTURES_DIR / "test-article.md"
 
-    result = run_nostr_publish(article_path, bunker_uri=BUNKER_URI, relays=[RELAY_URL], timeout=1)
+    result = run_nostr_publish(
+        article_path,
+        bunker_uri=docker_services["bunker_uri"],
+        relays=[docker_services["relay_url"]],
+        timeout=1,
+        client_secret=docker_services["client_secret"],
+    )
 
     if result.returncode != 0:
         assert "timeout" in result.stderr.lower() or "timed out" in result.stderr.lower(), (

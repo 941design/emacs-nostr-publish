@@ -10,6 +10,35 @@ End-to-end tests verifying the complete publish workflow using real Docker servi
 
 For local stack setup and credentials, see [local-setup.md](local-setup.md).
 
+## Port Configuration
+
+Integration tests read port configuration from environment variables:
+
+| Variable                     | Default | Description       |
+|------------------------------|---------|-------------------|
+| `NOSTR_PUBLISH_RELAY_PORT`   | 8080    | Relay host port   |
+| `NOSTR_PUBLISH_BLOSSOM_PORT` | 3000    | Blossom host port |
+
+These are loaded from `.env` file (if present) via `python-dotenv`, allowing tests to work regardless of invocation method (`make` vs `pytest` directly).
+
+### Why Not Hardcode Ports in Test Fixtures?
+
+**IMPORTANT:** Test fixtures must NOT hardcode relay URLs with specific ports.
+
+If a fixture contains `relays: [ws://localhost:8080]` and:
+1. The test stack runs on a different port (e.g., 8585 from `.env`)
+2. A production or third-party relay happens to be running on port 8080
+
+Then either:
+- Tests fail with `RelayNotInAllowlistError` (port mismatch), or
+- Tests **accidentally publish to an unintended relay** (security/privacy risk)
+
+**Safe patterns for test fixtures:**
+- Omit `relays` field entirely (defaults to CLI-provided relays)
+- Use `relays: ["*"]` (explicit wildcard, uses CLI relays per spec)
+
+This ensures tests always publish to the dynamically-configured test relay.
+
 ## Running Integration Tests
 
 From the project root:
@@ -95,6 +124,10 @@ The Emacs tests run in batch mode (`emacs --batch`), loading `nostr-publish.el` 
 
 Test Markdown files are located in `tests/integration/fixtures/`:
 
-- `test-article.md`: Standard article with all common fields
-- `minimal-article.md`: Minimal article (title + slug only)
-- `all-fields-article.md`: Comprehensive article with all optional fields
+| Fixture                 | Purpose                              | Relays Config            |
+|-------------------------|--------------------------------------|--------------------------|
+| `test-article.md`       | Standard article with common fields  | None (uses CLI defaults) |
+| `minimal-article.md`    | Minimal article (title + slug only)  | None (uses CLI defaults) |
+| `all-fields-article.md` | All optional fields including relays | `["*"]` (wildcard)       |
+
+Note: Fixtures use dynamic relay resolution (no hardcoded ports) to ensure tests work with any port configuration. See [Port Configuration](#port-configuration) above.

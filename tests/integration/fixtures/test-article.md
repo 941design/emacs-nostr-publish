@@ -6,8 +6,6 @@ published_at: 1700000000
 tags:
   - test
   - integration
-relays:
-  - ws://localhost:8081
 ---
 # Test Article
 

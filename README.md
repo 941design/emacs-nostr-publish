@@ -13,9 +13,14 @@ Publishes Markdown files with YAML frontmatter to Nostr relays using remote sign
 ## Features
 
 - **Markdown authoring**: Write in Markdown with YAML frontmatter
+- **Cover images**: Support for NIP-92 image metadata tags
+- **Local image upload**: Process and upload local cover images to Blossom servers
+- **Idempotent publishing**: Hash-based upload skip for unchanged cover images
+- **Shareable addresses**: NIP-19 naddr encoding for cross-relay article discovery
 - **Remote signing**: NIP-46 support via any compatible signer
 - **Deterministic**: Same input always produces identical events
 - **CLI + Emacs**: Use from command line or Emacs (`C-c C-p`)
+- **JSON output**: Machine-parseable publish results for automation
 - **Strict validation**: Fail-fast on invalid frontmatter
 
 ## Prerequisites
@@ -104,7 +109,8 @@ Basic setup with `use-package`:
   :custom
   (nostr-publish-bunker-uri "bunker://pubkey?relay=wss://relay.example.com")
   (nostr-publish-default-relays '("wss://relay1.example.com" "wss://relay2.example.com"))
-  (nostr-publish-timeout 60))
+  (nostr-publish-timeout 60)
+  (nostr-publish-blossom-url "https://blossom.example.com"))  ; for cover.file uploads
 ```
 
 Or configure variables directly:
@@ -122,6 +128,9 @@ Or configure variables directly:
 
 ;; Optional: signing timeout (seconds, default 30)
 (setq nostr-publish-timeout 60)
+
+;; Optional: Blossom server for cover image uploads (required if using cover.file)
+(setq nostr-publish-blossom-url "https://blossom.example.com")
 ```
 
 > **Note**: The `:hook` (or `add-hook`) is required to enable `nostr-publish-mode`, which provides the `C-c C-p` keybinding. This minor mode binding takes precedence over markdown-mode's default `C-c C-p`.
@@ -131,7 +140,8 @@ Or configure variables directly:
 ```elisp
 ((markdown-mode
   . ((nostr-publish-bunker-uri . "bunker://project-pubkey?relay=wss://relay.example.com")
-     (nostr-publish-default-relays . ("wss://project-relay.example.com")))))
+     (nostr-publish-default-relays . ("wss://project-relay.example.com"))
+     (nostr-publish-blossom-url . "https://blossom.example.com"))))
 ```
 
 **Secure credential storage** with auth-source:
@@ -163,6 +173,14 @@ nostr-publish article.md --relay wss://relay.example.com --dry-run
 # Custom timeout for signer operations (default: 30 seconds)
 nostr-publish article.md --bunker "bunker://..." --relay wss://relay.example.com --timeout 60
 
+# Publish with local cover image (requires --blossom)
+nostr-publish article.md --bunker "bunker://..." --relay wss://relay.example.com \
+  --blossom https://blossom.example.com
+
+# Custom cover image size (default: 1200x630)
+nostr-publish article.md --bunker "bunker://..." --relay wss://relay.example.com \
+  --blossom https://blossom.example.com --cover-size 800x400
+
 # Show version
 nostr-publish --version
 ```
@@ -174,6 +192,75 @@ nostr-publish --version
 
 Open a Markdown file and press `C-c C-p` to publish as long form content to nostr.
 
+On success, Emacs displays:
+- Event ID (hex)
+- Public key (hex)
+- Article address (naddr - shareable NIP-19 encoded reference)
+
+### Example: Idempotent Publishing with Cover Images
+
+When using local cover images, nostr-publish automatically manages uploads to avoid duplication:
+
+**Initial article** (`article.md`):
+```yaml
+---
+title: My Article
+slug: my-article
+image:
+  file: ./cover.jpg
+---
+
+Article content here.
+```
+
+**First publish**:
+```bash
+nostr-publish article.md --bunker "bunker://..." --relay wss://relay.example.com \
+  --blossom https://blossom.example.com
+```
+
+After successful publish, frontmatter is automatically updated:
+```yaml
+---
+title: My Article
+slug: my-article
+image:
+  file: ./cover.jpg
+  url: https://cdn.example.com/abc123...jpg
+  hash: abc123def456...
+---
+```
+
+**Second publish** (same image file):
+- Hash computed from `cover.jpg` matches stored `hash`
+- Upload is **skipped**
+- Existing `url` is reused
+- Saves bandwidth and avoids duplicate storage
+
+**Modified image**:
+- If you update `cover.jpg`, the computed hash will differ
+- New upload occurs automatically
+- Frontmatter updated with new `url` and `hash`
+
+This workflow works seamlessly in Emacs with `C-c C-p` - frontmatter updates happen automatically after each publish.
+
+### CLI Output Format
+
+After successful publish, the CLI outputs JSON containing all publish results:
+
+**Example output:**
+```json
+{"event_id": "abc123def456...", "naddr": "naddr1qqxnzd3cxsmnjv3hx56rjwf3...", "pubkey": "3bf0c63fcb..."}
+```
+
+**Output fields:**
+- `event_id`: Published event ID (hex, 64 characters)
+- `pubkey`: Author public key (hex, 64 characters)
+- `naddr`: NIP-19 encoded article address (optional, for sharing/discovery)
+- `cover`: Cover image metadata (optional, when using `cover.file`)
+
+The naddr field provides a shareable address that Nostr clients can use to fetch and display your article across any relay.
+
 ## Frontmatter Format
 
 ```yaml
@@ -182,6 +269,7 @@ title: Article Title          # Required
 slug: article-slug            # Required (stable identifier)
 summary: Short description    # Optional
 published_at: 1700000000      # Optional (Unix timestamp)
+image: https://example.com/cover.jpg  # Optional (cover image, simple format)
 tags:                         # Optional
   - nostr
   - writing
@@ -190,16 +278,57 @@ relays:                       # Optional (subset of CLI --relay allowlist)
 ---
 ```
 
+> **Breaking Change (v2.0.0)**: The `cover:` field has been renamed to `image:`. Update your frontmatter to use `image:` instead of `cover:`. The old field name is no longer supported.
+
+### Cover Image (Extended Format)
+
+The `image` field supports three formats. Simple format (string URL):
+
+```yaml
+image: https://example.com/cover.jpg
+```
+
+Extended format with optional metadata (NIP-92):
+
+```yaml
+image:
+  url: https://example.com/cover.jpg
+  mime: image/jpeg        # Optional (inferred from URL if omitted)
+  alt: Image description  # Optional (accessibility text)
+  dim: 1200x630          # Optional (dimensions in WIDTHxHEIGHT format)
+```
+
+Local file format with idempotent publishing (requires `--blossom` flag):
+
+```yaml
+image:
+  file: ./images/cover.jpg  # Local file path (relative to Markdown file)
+  alt: Image description    # Optional (accessibility text)
+  # After first publish, these fields are auto-populated:
+  url: https://cdn.example.com/abc123...jpg  # Blossom CDN URL
+  hash: abc123def456...     # SHA-256 hash (64-char hex)
+```
+
+When using local files, the image is automatically:
+- Stripped of EXIF metadata (privacy protection)
+- Resized/cropped to 1200x630 (configurable via `--cover-size`)
+- Converted to JPEG
+- Uploaded to the specified Blossom server
+- The `url` and `hash` fields are written back to frontmatter
+
+**Idempotent Publishing**: On subsequent publishes, if the `hash` field matches the computed hash of the processed image, upload is skipped and the existing `url` is reused. This avoids duplicate uploads and saves bandwidth. If you modify the image file, the hash will differ and a new upload will occur.
+
 ### Available Fields
 
-| Field          | Required | Type    | Description                                        |
-|----------------|----------|---------|----------------------------------------------------|
-| `title`        | Yes      | string  | Article title (becomes "title" tag)                |
-| `slug`         | Yes      | string  | Stable identifier (becomes "d" tag)                |
-| `summary`      | No       | string  | Short description (becomes "summary" tag)          |
-| `published_at` | No       | integer | Unix timestamp (becomes "published_at" tag)        |
-| `tags`         | No       | list    | Hashtags (become "t" tags)                         |
-| `relays`       | No       | list    | Subset of CLI relays (or `"*"` for all CLI relays) |
+| Field          | Required | Type        | Description                                          |
+|----------------|----------|-------------|------------------------------------------------------|
+| `title`        | Yes      | string      | Article title (becomes "title" tag)                  |
+| `slug`         | Yes      | string      | Stable identifier (becomes "d" tag)                  |
+| `summary`      | No       | string      | Short description (becomes "summary" tag)            |
+| `published_at` | No       | integer     | Unix timestamp (becomes "published_at" tag)          |
+| `image`        | No       | string/dict | Cover image URL, metadata, or local file (see above) |
+| `tags`         | No       | list        | Hashtags (become "t" tags)                           |
+| `relays`       | No       | list        | Subset of CLI relays (or `"*"` for all CLI relays)   |
 
 ### Relay Precedence
 
@@ -270,6 +399,7 @@ Run `make help` to see all available targets:
 
 ```bash
 make build             # Build distribution packages
+make clean-emacs       # Clean Emacs byte-compiled files
 make clean             # Clean build artifacts
 make dry-run           # Dry-run publish example (requires test fixture)
 make format            # Auto-fix linting and formatting issues
@@ -281,11 +411,14 @@ make lint              # Run linter and formatter check
 make publish           # Publish to PyPI (requires UV_PUBLISH_TOKEN)
 make publish-test      # Publish to TestPyPI
 make stack-down        # Stop local test stack and remove volumes
-make stack-up          # Start local test stack (relay + signer)
+make stack-up          # Start local test stack (relay + signer + blossom)
 make sync              # Sync venv with production dependencies
 make sync-dev          # Sync venv with dev dependencies
 make test              # Run all tests
 make test-e2e          # Run integration tests only
+make test-emacs        # Run all Emacs tests (compile + unit)
+make test-emacs-compile # Byte-compile Emacs Lisp files
+make test-emacs-unit   # Run Emacs ERT unit tests
 make test-unit         # Run unit tests only
 make version-major     # Bump major version (0.1.0 -> 1.0.0)
 make version-minor     # Bump minor version (0.1.0 -> 0.2.0)
