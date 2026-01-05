@@ -9,6 +9,7 @@
 - NEVER tailor production code towards tests. Production code MUST NOT contain adaptations, or tweaks that are necessary only to satisfy the test environment.
 - DO NOT include recommendations for third party software or services, unless explicitly required by this project. This tool is agnostic to concreate implementations of the standards used.
 - DO NOT default to skipping integration tests if preconditions are not met, instead fail fast and hard.
+- ALAWYS check linting and formatting after finishing an increment.
 
 ## Documentation Guidelines
 

@@ -224,9 +224,9 @@ class TestValidateFrontmatter:
         assert result.tags == ["tag1", "tag2"]
         assert result.relays == ["wss://relay1.example.com"]
 
-    @given(st.text(min_size=1).map(lambda s: s.strip()).filter(lambda s: s))
+    @given(st.text(min_size=1).map(lambda s: s.strip()).filter(lambda s: s and not any(c in s for c in "\n\r[]{}")))
     def test_validate_frontmatter_title_non_empty_string(self, title):
-        """Property: Non-empty title strings pass validation."""
+        """Property: Non-empty title strings without YAML structural chars pass validation."""
         fm = Frontmatter(title=title, slug="slug")
         result = validate_frontmatter(fm)
         assert result.title == title
@@ -424,9 +424,15 @@ class TestValidateFrontmatter:
         result = validate_frontmatter(fm)
         assert result.tags == []
 
-    @given(st.lists(st.text(min_size=1).map(lambda s: s.strip()).filter(lambda s: s), max_size=10, unique=True))
+    @given(
+        st.lists(
+            st.text(min_size=1).map(lambda s: s.strip()).filter(lambda s: s and not any(c in s for c in "\n\r[]{}")),
+            max_size=10,
+            unique=True,
+        )
+    )
     def test_validate_frontmatter_tags_non_empty_strings(self, tags):
-        """Property: Tags with non-empty strings pass validation."""
+        """Property: Tags with non-empty strings without YAML structural chars pass validation."""
         fm = Frontmatter(title="Title", slug="slug", tags=tags)
         result = validate_frontmatter(fm)
         assert result.tags == tags
@@ -545,9 +551,16 @@ class TestValidateFrontmatter:
         result = validate_frontmatter(fm)
         assert result.tags == ["a", "b", "c"]
 
-    @given(st.lists(st.text(min_size=1, max_size=10).map(lambda s: s.strip()).filter(lambda s: s), max_size=5))
+    @given(
+        st.lists(
+            st.text(min_size=1, max_size=10)
+            .map(lambda s: s.strip())
+            .filter(lambda s: s and not any(c in s for c in "\n\r[]{}")),
+            max_size=5,
+        )
+    )
     def test_validate_frontmatter_with_varied_tags(self, tags):
-        """Property: Various tag lists are processed correctly."""
+        """Property: Various tag lists without YAML structural chars are processed correctly."""
         assume(len(tags) > 0)
         fm = Frontmatter(title="Title", slug="slug", tags=tags)
         result = validate_frontmatter(fm)
@@ -775,3 +788,130 @@ class TestValidateFrontmatter:
         assert result1.image.mime == result2.image.mime
         assert result1.image.alt == result2.image.alt
         assert result1.image.dim == result2.image.dim
+
+
+# ============================================================================
+# YAML Injection Prevention Tests (spec §20.1)
+# ============================================================================
+
+
+class TestYamlInjectionPrevention:
+    """Tests for YAML injection prevention per spec §20.1.
+
+    Values containing newlines or YAML structural characters ([, ], {, })
+    must be rejected to prevent injection attacks.
+    """
+
+    # Title field injection tests
+    def test_title_with_newline_fails(self):
+        """Title containing newline must be rejected."""
+        fm = Frontmatter(title="Title\nInjected: value", slug="slug")
+        with pytest.raises(InvalidFieldValueError) as exc_info:
+            validate_frontmatter(fm)
+        assert "invalid characters" in str(exc_info.value).lower()
+
+    def test_title_with_carriage_return_fails(self):
+        """Title containing carriage return must be rejected."""
+        fm = Frontmatter(title="Title\rInjected", slug="slug")
+        with pytest.raises(InvalidFieldValueError) as exc_info:
+            validate_frontmatter(fm)
+        assert "invalid characters" in str(exc_info.value).lower()
+
+    def test_title_with_brackets_fails(self):
+        """Title containing YAML brackets must be rejected."""
+        fm = Frontmatter(title="Title [injected]", slug="slug")
+        with pytest.raises(InvalidFieldValueError) as exc_info:
+            validate_frontmatter(fm)
+        assert "invalid characters" in str(exc_info.value).lower()
+
+    def test_title_with_braces_fails(self):
+        """Title containing YAML braces must be rejected."""
+        fm = Frontmatter(title="Title {injected: value}", slug="slug")
+        with pytest.raises(InvalidFieldValueError) as exc_info:
+            validate_frontmatter(fm)
+        assert "invalid characters" in str(exc_info.value).lower()
+
+    # Summary field injection tests
+    def test_summary_with_newline_fails(self):
+        """Summary containing newline must be rejected."""
+        fm = Frontmatter(title="Title", slug="slug", summary="Summary\ninjected: value")
+        with pytest.raises(InvalidFieldValueError) as exc_info:
+            validate_frontmatter(fm)
+        assert "invalid characters" in str(exc_info.value).lower()
+
+    def test_summary_with_brackets_fails(self):
+        """Summary containing YAML brackets must be rejected."""
+        fm = Frontmatter(title="Title", slug="slug", summary="Summary [injected]")
+        with pytest.raises(InvalidFieldValueError) as exc_info:
+            validate_frontmatter(fm)
+        assert "invalid characters" in str(exc_info.value).lower()
+
+    def test_summary_with_braces_fails(self):
+        """Summary containing YAML braces must be rejected."""
+        fm = Frontmatter(title="Title", slug="slug", summary="Summary {key: value}")
+        with pytest.raises(InvalidFieldValueError) as exc_info:
+            validate_frontmatter(fm)
+        assert "invalid characters" in str(exc_info.value).lower()
+
+    # Tags field injection tests
+    def test_tag_with_newline_fails(self):
+        """Tag containing newline must be rejected."""
+        fm = Frontmatter(title="Title", slug="slug", tags=["valid", "tag\ninjected"])
+        with pytest.raises(InvalidFieldValueError) as exc_info:
+            validate_frontmatter(fm)
+        assert "invalid characters" in str(exc_info.value).lower()
+
+    def test_tag_with_brackets_fails(self):
+        """Tag containing YAML brackets must be rejected."""
+        fm = Frontmatter(title="Title", slug="slug", tags=["valid", "tag[injection]"])
+        with pytest.raises(InvalidFieldValueError) as exc_info:
+            validate_frontmatter(fm)
+        assert "invalid characters" in str(exc_info.value).lower()
+
+    def test_tag_with_braces_fails(self):
+        """Tag containing YAML braces must be rejected."""
+        fm = Frontmatter(title="Title", slug="slug", tags=["valid", "tag{key}"])
+        with pytest.raises(InvalidFieldValueError) as exc_info:
+            validate_frontmatter(fm)
+        assert "invalid characters" in str(exc_info.value).lower()
+
+    # Property-based tests for comprehensive coverage
+    @given(st.sampled_from(["\n", "\r", "[", "]", "{", "}"]))
+    def test_title_rejects_any_yaml_structural_char(self, char):
+        """Property: Title rejects any YAML structural character."""
+        fm = Frontmatter(title=f"Title{char}value", slug="slug")
+        with pytest.raises(InvalidFieldValueError):
+            validate_frontmatter(fm)
+
+    @given(st.sampled_from(["\n", "\r", "[", "]", "{", "}"]))
+    def test_summary_rejects_any_yaml_structural_char(self, char):
+        """Property: Summary rejects any YAML structural character."""
+        fm = Frontmatter(title="Title", slug="slug", summary=f"Summary{char}value")
+        with pytest.raises(InvalidFieldValueError):
+            validate_frontmatter(fm)
+
+    @given(st.sampled_from(["\n", "\r", "[", "]", "{", "}"]))
+    def test_tag_rejects_any_yaml_structural_char(self, char):
+        """Property: Tags reject any YAML structural character."""
+        fm = Frontmatter(title="Title", slug="slug", tags=[f"tag{char}value"])
+        with pytest.raises(InvalidFieldValueError):
+            validate_frontmatter(fm)
+
+    # Valid content tests (ensure we don't over-reject)
+    def test_title_allows_safe_special_chars(self):
+        """Title should allow safe special characters like colon, quotes."""
+        fm = Frontmatter(title='My Article: A "Great" Story!', slug="slug")
+        result = validate_frontmatter(fm)
+        assert result.title == 'My Article: A "Great" Story!'
+
+    def test_summary_allows_safe_special_chars(self):
+        """Summary should allow safe special characters."""
+        fm = Frontmatter(title="Title", slug="slug", summary="This is a summary: with 'quotes' & more!")
+        result = validate_frontmatter(fm)
+        assert result.summary == "This is a summary: with 'quotes' & more!"
+
+    def test_tag_allows_safe_special_chars(self):
+        """Tags should allow safe special characters (per YAML scalar rules)."""
+        fm = Frontmatter(title="Title", slug="slug", tags=["c++", "c#", "node.js"])
+        result = validate_frontmatter(fm)
+        assert result.tags == ["c++", "c#", "node.js"]

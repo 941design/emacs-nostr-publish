@@ -13,8 +13,20 @@ from .utils import deduplicate_preserving_order
 # Slug must contain only lowercase letters, numbers, and hyphens
 SLUG_PATTERN = re.compile(r"^[a-z0-9-]+$")
 
+# Characters that could enable YAML injection attacks (spec §20.1)
+YAML_DANGEROUS_CHARS = frozenset("\n\r[]{}")
+
 ALLOWED_FIELDS = {"title", "slug", "summary", "published_at", "tags", "relays", "image", "naddr"}
 REQUIRED_FIELDS = {"title", "slug"}
+
+
+def _contains_yaml_dangerous_chars(value: str) -> bool:
+    """Check if value contains YAML structural characters that could enable injection.
+
+    Per spec §20.1, values containing newlines or YAML structural characters
+    ([, ], {, }) must be rejected to prevent injection attacks.
+    """
+    return any(char in YAML_DANGEROUS_CHARS for char in value)
 
 
 def validate_frontmatter_dict(frontmatter_dict: dict) -> None:
@@ -135,6 +147,9 @@ def validate_frontmatter(fm: Frontmatter) -> Frontmatter:
     title = fm.title.strip()
     if not title:
         raise InvalidFieldValueError("Field 'title' must not be empty")
+    # Security: Reject YAML structural characters and newlines (spec §20.1)
+    if _contains_yaml_dangerous_chars(title):
+        raise InvalidFieldValueError("Field 'title' contains invalid characters (newlines or YAML structural chars)")
 
     if not isinstance(fm.slug, str):
         raise InvalidFieldTypeError("Field 'slug' must be a string")
@@ -151,6 +166,11 @@ def validate_frontmatter(fm: Frontmatter) -> Frontmatter:
         summary = fm.summary.strip()
         if not summary:
             raise InvalidFieldValueError("Field 'summary' must not be empty")
+        # Security: Reject YAML structural characters and newlines (spec §20.1)
+        if _contains_yaml_dangerous_chars(summary):
+            raise InvalidFieldValueError(
+                "Field 'summary' contains invalid characters (newlines or YAML structural chars)"
+            )
 
     published_at = None
     if fm.published_at is not None:
@@ -171,6 +191,9 @@ def validate_frontmatter(fm: Frontmatter) -> Frontmatter:
             trimmed = tag.strip()
             if not trimmed:
                 raise InvalidFieldValueError("Tags must not be empty")
+            # Security: Reject YAML structural characters and newlines (spec §20.1)
+            if _contains_yaml_dangerous_chars(trimmed):
+                raise InvalidFieldValueError("Tag contains invalid characters (newlines or YAML structural chars)")
             trimmed_tags.append(trimmed)
         tags = deduplicate_preserving_order(trimmed_tags)
 
