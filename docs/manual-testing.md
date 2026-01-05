@@ -32,10 +32,8 @@ This will print events as they arrive.
 ## 3. Create Event from CLI
 
 ```bash
-export NOSTR_CLIENT_KEY=0000000000000000000000000000000000000000000000000000000000000002
-
 uv run nostr-publish tests/integration/fixtures/test-article.md \
-  --bunker "bunker://79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798?relay=ws%3A%2F%2Flocalhost%3A8080" \
+  --bunker "bunker://79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798?relay=ws%3A%2F%2Flocalhost%3A8080&secret=testauth" \
   --relay ws://localhost:8080
 ```
 
@@ -60,16 +58,15 @@ Minimal setup (adjust ports if using custom `.env`):
 ;; Enable nostr-publish-mode in markdown buffers (activates C-c C-p binding)
 (add-hook 'markdown-mode-hook #'nostr-publish-mode)
 
-(setenv "NOSTR_CLIENT_KEY" "0000000000000000000000000000000000000000000000000000000000000002")
 (setq nostr-publish-bunker-uri
-      "bunker://79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798?relay=ws%3A%2F%2Flocalhost%3A8080")
+      "bunker://79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798?relay=ws%3A%2F%2Flocalhost%3A8080&secret=testauth")
 (setq nostr-publish-default-relays '("ws://localhost:8080"))
 ```
 
 ## 5. Publish from Emacs
 
 1. Open a Markdown file with valid [frontmatter](../README.md#frontmatter-format)
-2. Press `C-c C-p`
+2. Press `C-c C-p` (or `M-x nostr-publish-buffer`)
 3. Verify the event appears in the listening terminal
 
 ## Cleanup

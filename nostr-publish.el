@@ -27,6 +27,7 @@
 
 ;; Thin Emacs wrapper around nostr-publish CLI tool.
 ;; Provides C-c C-p keybinding to publish current Markdown buffer to Nostr.
+;; Provides C-c C-b keybinding to preview in browser before publishing.
 
 ;;; Code:
 
@@ -67,6 +68,40 @@ be a subset of this list."
 If nil and frontmatter has image.file, an error will occur."
   :type '(choice (const :tag "None" nil)
                  (string :tag "Blossom URL"))
+  :group 'nostr-publish)
+
+;; Preview mode configuration
+(defcustom nostr-publish-preview-relay nil
+  "Preview relay URL for preview mode publishing.
+Should point to preview/staging relay infrastructure."
+  :type '(choice (const :tag "None" nil)
+                 (string :tag "Preview Relay URL"))
+  :group 'nostr-publish)
+
+(defcustom nostr-publish-preview-bunker nil
+  "Preview bunker URI for preview mode signing.
+Uses same signing identity as production."
+  :type '(choice (const :tag "None" nil)
+                 (string :tag "Preview Bunker URI"))
+  :group 'nostr-publish)
+
+(defcustom nostr-publish-preview-blossom nil
+  "Preview Blossom server URL for preview mode uploads.
+Should point to preview/staging Blossom infrastructure."
+  :type '(choice (const :tag "None" nil)
+                 (string :tag "Preview Blossom URL"))
+  :group 'nostr-publish)
+
+(defcustom nostr-publish-preview-reader nil
+  "Preview reader base URL for opening preview articles.
+Example: https://preview.example.com"
+  :type '(choice (const :tag "None" nil)
+                 (string :tag "Preview Reader URL"))
+  :group 'nostr-publish)
+
+(defcustom nostr-publish-preview-open-browser t
+  "Whether to open browser with preview reader after preview publish."
+  :type 'boolean
   :group 'nostr-publish)
 
 (defun nostr-publish--check-cli ()
@@ -167,13 +202,15 @@ CONTRACT:
       ;; Step 4 & 5: Invoke CLI and handle result
       (nostr-publish--invoke-cli args))))
 
-(defun nostr-publish--invoke-cli (args)
-  "Invoke CLI with ARGS and handle result.
+(defun nostr-publish--invoke-cli-common (args success-handler error-prefix)
+  "Invoke CLI with ARGS and handle result via SUCCESS-HANDLER.
 ARGS is a list where first element is command, rest are arguments.
+SUCCESS-HANDLER is called with (result target-buffer) on success.
+ERROR-PREFIX is used in error messages.
 Captures stdout/stderr and displays appropriate message."
   (let ((temp-stdout-file (make-temp-file "nostr-publish-stdout-"))
         (temp-stderr-file (make-temp-file "nostr-publish-stderr-"))
-        (target-buffer (current-buffer))  ;; Capture buffer at invocation
+        (target-buffer (current-buffer))
         (exit-code nil)
         (stdout nil)
         (stderr nil))
@@ -199,43 +236,50 @@ Captures stdout/stderr and displays appropriate message."
           ;; Handle result based on exit code
           (cond
            ((eq exit-code 0)
-            ;; Parse JSON output to extract all fields
+            ;; Parse JSON output and call success handler
             (condition-case _
-                (let* ((result (json-parse-string stdout :object-type 'alist))
-                       (event-id (alist-get 'event_id result))
-                       (pubkey (alist-get 'pubkey result))
-                       (naddr (alist-get 'naddr result))
-                       (image (alist-get 'image result)))
-
-                  ;; Update image metadata if present
-                  (when image
-                    (unless (eq (current-buffer) target-buffer)
-                      (error "Buffer changed during publish operation"))
-                    (with-current-buffer target-buffer
-                      (nostr-publish--update-cover-frontmatter image)))
-
-                  ;; Update naddr if present
-                  (when naddr
-                    (unless (eq (current-buffer) target-buffer)
-                      (error "Buffer changed during publish operation"))
-                    (with-current-buffer target-buffer
-                      (nostr-publish--update-naddr-frontmatter naddr)))
-
-                  ;; Display success message
-                  (message "Published: event ID %s, pubkey %s%s"
-                           event-id pubkey
-                           (if naddr (format ", naddr %s" naddr) "")))
-
-              ;; If JSON parsing fails, display message without metadata
+                (let ((result (json-parse-string stdout :object-type 'alist)))
+                  (funcall success-handler result target-buffer))
               (error
-               (message "Published successfully (could not parse JSON output)"))))
+               (message "%s successfully (could not parse JSON output)" error-prefix))))
            (t
             ;; Failure: display error from stderr
             (let ((error-msg (string-trim (or stderr "Unknown error"))))
-              (message "Publish failed: %s" error-msg)))))
+              (message "%s failed: %s" error-prefix error-msg)))))
       ;; Cleanup temp files
       (ignore-errors (delete-file temp-stdout-file))
       (ignore-errors (delete-file temp-stderr-file)))))
+
+(defun nostr-publish--invoke-cli (args)
+  "Invoke CLI with ARGS and handle result for production publish.
+Updates frontmatter with image and naddr if present."
+  (nostr-publish--invoke-cli-common
+   args
+   (lambda (result target-buffer)
+     (let ((event-id (alist-get 'event_id result))
+           (pubkey (alist-get 'pubkey result))
+           (naddr (alist-get 'naddr result))
+           (image (alist-get 'image result)))
+
+       ;; Update image metadata if present
+       (when image
+         (unless (eq (current-buffer) target-buffer)
+           (error "Buffer changed during publish operation"))
+         (with-current-buffer target-buffer
+           (nostr-publish--update-cover-frontmatter image)))
+
+       ;; Update naddr if present
+       (when naddr
+         (unless (eq (current-buffer) target-buffer)
+           (error "Buffer changed during publish operation"))
+         (with-current-buffer target-buffer
+           (nostr-publish--update-naddr-frontmatter naddr)))
+
+       ;; Display success message
+       (message "Published: event ID %s, pubkey %s%s"
+                event-id pubkey
+                (if naddr (format ", naddr %s" naddr) ""))))
+   "Publish"))
 
 (defun nostr-publish--sanitize-yaml-value (value)
   "Sanitize VALUE for safe insertion into YAML frontmatter.
@@ -430,11 +474,117 @@ changes are rolled back on error (via undo mechanism)."
        (signal (car err) (cdr err))))))
 
 ;;;###autoload
+(defun nostr-publish-preview-buffer ()
+  "Preview current Markdown buffer using preview infrastructure.
+
+Uses the exact same publishing pipeline as production but targets
+preview infrastructure and suppresses frontmatter write-back.
+
+CONTRACT:
+  Inputs:
+    - Current buffer content (Markdown with frontmatter)
+    - Preview configuration variables (relay, bunker, blossom, reader)
+
+  Outputs:
+    - Success message with naddr
+    - Opens preview reader in browser (if configured)
+    - Does NOT update buffer frontmatter
+
+  Invariants:
+    - Buffer must be saved before previewing
+    - Preview relay, bunker required
+    - Uses same NIP-46 signing as production
+    - Source file remains unmodified
+
+  Properties:
+    - Same validation as production publish
+    - Same image processing and upload
+    - Same event construction (with preview tag)
+
+  Algorithm:
+    1. Validate preview configuration (relay, bunker, reader required)
+    2. Validate relays (preview relay must use wss:// or ws://)
+    3. Save buffer if modified
+    4. Build CLI arguments with preview configuration:
+       a. Use preview relay (single relay)
+       b. Use preview bunker
+       c. Use preview blossom (if configured)
+       d. Add --tag x-emacs-nostr-publish preview
+    5. Invoke CLI via nostr-publish--invoke-cli-preview
+    6. On success:
+       a. Do NOT update frontmatter
+       b. Open preview reader with naddr (if configured)
+       c. Display success message
+"
+  (interactive)
+  ;; Step 1: Validate preview configuration
+  (unless nostr-publish-preview-relay
+    (error "Preview relay not configured. Set nostr-publish-preview-relay"))
+  (unless nostr-publish-preview-bunker
+    (error "Preview bunker not configured. Set nostr-publish-preview-bunker"))
+  (unless nostr-publish-preview-reader
+    (error "Preview reader not configured. Set nostr-publish-preview-reader"))
+
+  ;; Step 2: Validate buffer has file
+  (let ((file (buffer-file-name)))
+    (unless file
+      (error "Buffer has no file. Save buffer before previewing"))
+
+    ;; Validate preview relay URL
+    (unless (string-match-p "\\`wss?://" nostr-publish-preview-relay)
+      (error "Invalid preview relay URL '%s': must use ws:// or wss://" nostr-publish-preview-relay))
+
+    ;; Validate preview reader URL (must be http:// or https://)
+    (unless (string-match-p "\\`https?://" nostr-publish-preview-reader)
+      (error "Invalid preview reader URL '%s': must use http:// or https://" nostr-publish-preview-reader))
+
+    ;; Step 3: Save buffer if modified
+    (when (buffer-modified-p)
+      (save-buffer))
+
+    ;; Step 4: Build CLI command arguments for preview
+    (let ((args (list nostr-publish-cli-command file)))
+      (setq args (append args (list "--bunker" nostr-publish-preview-bunker)))
+      (setq args (append args (list "--relay" nostr-publish-preview-relay)))
+      (setq args (append args (list "--timeout" (number-to-string nostr-publish-timeout))))
+      (when nostr-publish-preview-blossom
+        (setq args (append args (list "--blossom" nostr-publish-preview-blossom))))
+      ;; Add preview tag
+      (setq args (append args (list "--tag" "x-emacs-nostr-publish" "preview")))
+
+      ;; Step 5: Invoke CLI and handle result (no frontmatter updates)
+      (nostr-publish--invoke-cli-preview args))))
+
+(defun nostr-publish--invoke-cli-preview (args)
+  "Invoke CLI for preview with ARGS, suppress frontmatter updates.
+Opens preview reader with naddr on success."
+  (nostr-publish--invoke-cli-common
+   args
+   (lambda (result _target-buffer)
+     (let ((event-id (alist-get 'event_id result))
+           (pubkey (alist-get 'pubkey result))
+           (naddr (alist-get 'naddr result)))
+
+       ;; NO frontmatter updates in preview mode
+
+       ;; Open preview reader if configured
+       (when (and naddr nostr-publish-preview-open-browser)
+         (let ((preview-url (concat nostr-publish-preview-reader "/" naddr)))
+           (browse-url preview-url)))
+
+       ;; Display success message
+       (message "Preview published: event ID %s, pubkey %s%s"
+                event-id pubkey
+                (if naddr (format ", naddr %s" naddr) ""))))
+   "Preview published"))
+
+;;;###autoload
 (define-minor-mode nostr-publish-mode
   "Minor mode for Markdown buffers with nostr-publish keybindings."
   :lighter " Nostr"
   :keymap (let ((map (make-sparse-keymap)))
             (define-key map (kbd "C-c C-p") #'nostr-publish-buffer)
+            (define-key map (kbd "C-c C-b") #'nostr-publish-preview-buffer)
             map))
 
 (provide 'nostr-publish)

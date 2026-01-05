@@ -21,6 +21,8 @@ services:
       - "0000000000000000000000000000000000000000000000000000000000000001"
       - "--authorized-keys"
       - "c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5"
+      - "--authorized-secrets"
+      - "testauth"
       - "ws://relay:8080"
     depends_on:
       relay:
@@ -37,6 +39,25 @@ services:
     healthcheck:
       test: ["CMD-SHELL", "wget -q --spider http://localhost:3000 || exit 1"]
       interval: 2s
+      timeout: 5s
+      retries: 10
+    depends_on:
+      relay:
+        condition: service_healthy
+
+  njump:
+    build:
+      context: ./njump
+    ports:
+      - "${NOSTR_PUBLISH_NJUMP_PORT:-2999}:2999"
+    environment:
+      - DOMAIN=localhost:${NOSTR_PUBLISH_NJUMP_PORT:-2999}
+      - RELAY_CONFIG_PATH=/app/relay-config.json
+    volumes:
+      - ./njump-relay-config.json:/app/relay-config.json:ro
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:2999 || exit 1"]
+      interval: 5s
       timeout: 5s
       retries: 10
     depends_on:

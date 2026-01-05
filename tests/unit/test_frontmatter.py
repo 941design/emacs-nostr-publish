@@ -7,7 +7,7 @@ import pytest
 from hypothesis import assume, given
 from hypothesis import strategies as st
 
-from nostr_publish.errors import FrontmatterParseError
+from nostr_publish.errors import FrontmatterParseError, InvalidFieldValueError
 from nostr_publish.frontmatter import dict_to_frontmatter, parse_frontmatter
 from nostr_publish.models import Frontmatter
 
@@ -520,17 +520,17 @@ class TestDictToFrontmatterImageField:
         assert fm.image is not None
         assert fm.image.url == cover_dict["url"]
 
-    def test_cover_dict_with_extra_keys_ignored(self):
-        """Extra keys in cover dict are ignored."""
+    def test_cover_dict_with_extra_keys_raises_error(self):
+        """Unknown keys in image dict raise InvalidFieldValueError (strict mode per spec 5.5)."""
         data = {
             "title": "Test",
             "slug": "test",
-            "image": {"url": "https://example.com/cover.jpg", "extra_key": "should be ignored"},
+            "image": {"url": "https://example.com/cover.jpg", "extra_key": "should cause error"},
         }
-        fm = dict_to_frontmatter(data)
-        assert fm.image is not None
-        assert fm.image.url == "https://example.com/cover.jpg"
-        assert not hasattr(fm.image, "extra_key")
+        with pytest.raises(InvalidFieldValueError) as exc_info:
+            dict_to_frontmatter(data)
+        assert "unknown keys in image object" in str(exc_info.value)
+        assert "extra_key" in str(exc_info.value)
 
     def test_full_frontmatter_with_all_fields_including_cover_string(self):
         """Full frontmatter with all fields including cover string."""

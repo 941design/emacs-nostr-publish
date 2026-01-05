@@ -6,13 +6,14 @@ Deterministic unsigned event generation from validated frontmatter and body.
 from .models import Frontmatter, ImageMetadata, UnsignedEvent
 
 
-def construct_event(frontmatter: Frontmatter, body: str) -> UnsignedEvent:
+def construct_event(frontmatter: Frontmatter, body: str, extra_tags: list[list[str]] | None = None) -> UnsignedEvent:
     """Construct unsigned NIP-23 event from frontmatter and Markdown body.
 
     CONTRACT:
       Inputs:
         - frontmatter: Frontmatter instance (validated)
         - body: string, Markdown content (frontmatter already removed)
+        - extra_tags: optional list of arbitrary tag arrays to inject, each tag is [key, value]
 
       Outputs:
         - event: UnsignedEvent instance with kind 30023, deterministic tags
@@ -20,63 +21,53 @@ def construct_event(frontmatter: Frontmatter, body: str) -> UnsignedEvent:
       Invariants:
         - kind always equals 30023 (NIP-23 long-form content)
         - content equals body exactly (no modifications)
-        - tags follow strict ordering per spec section 6.2
+        - tags follow strict ordering per spec section 7.2
         - tags is always a list of lists (each tag is [tag_name, tag_value, ...])
 
       Properties:
-        - Deterministic: same frontmatter + body always yields identical event
+        - Deterministic: same frontmatter + body + extra_tags always yields identical event
         - Complete: all frontmatter fields represented in tags per spec
         - Ordered: tag ordering is normative and reproducible
 
       Algorithm:
-        1. Initialize empty tags list
-        2. Add required tags in order:
-           a. Add ["d", frontmatter.slug]
-           b. Add ["title", frontmatter.title]
-        3. Add optional tags in order:
-           a. If frontmatter.summary is not None:
-              - Add ["summary", frontmatter.summary]
-           b. If frontmatter.published_at is not None:
-              - Convert published_at to string
-              - Add ["published_at", string_value]
-        4. Add content tags:
-           a. Sort frontmatter.tags lexicographically (case-sensitive)
-           b. For each tag in sorted order:
-              - Add ["t", tag]
-        5. Create UnsignedEvent:
+        1. Call build_tags(frontmatter, extra_tags) to construct tag list
+        2. Create UnsignedEvent:
            - kind: 30023
            - content: body
            - tags: constructed tags list
-        6. Return UnsignedEvent
-
-      Note: No additional tags beyond those specified are permitted.
+        3. Return UnsignedEvent
     """
-    tags = build_tags(frontmatter)
+    tags = build_tags(frontmatter, extra_tags)
     return UnsignedEvent(kind=30023, content=body, tags=tags)
 
 
-def build_tags(frontmatter: Frontmatter) -> list[list[str]]:
-    """Build deterministic tag list from frontmatter.
+def build_tags(frontmatter: Frontmatter, extra_tags: list[list[str]] | None = None) -> list[list[str]]:
+    """Build deterministic tag list from frontmatter with optional injected tags.
 
     CONTRACT:
       Inputs:
         - frontmatter: Frontmatter instance (validated)
+        - extra_tags: optional list of arbitrary tag arrays to inject, each tag is [key, value]
+          Example: [["x-emacs-nostr-publish", "preview"], ["client", "emacs"]]
 
       Outputs:
         - tags: list of tag arrays, each tag is [tag_name, tag_value, ...]
 
       Invariants:
-        - Tag ordering follows spec section 6.2 exactly (updated for image field)
+        - Tag ordering follows spec section 7.2 exactly
         - First tag is always ["d", slug]
         - Second tag is always ["title", title]
         - Optional metadata tags appear in defined order
-        - imeta tag (if present) appears after published_at, before content tags
+        - image tag (NIP-23 simple format) appears after published_at
+        - imeta tag (NIP-92 rich metadata) appears after image tag
+        - Extra tags (if present) appear after imeta, before content tags
         - Content tags (["t", tag]) are sorted lexicographically and appear last
 
       Properties:
-        - Deterministic: same frontmatter yields same tag list
+        - Deterministic: same frontmatter + extra_tags yields same tag list
         - Ordered: tag sequence is normative and reproducible
         - Complete: all frontmatter metadata represented
+        - Extensible: arbitrary tags can be injected without modifying core logic
 
       Algorithm:
         1. Initialize empty tags list
@@ -90,13 +81,18 @@ def build_tags(frontmatter: Frontmatter) -> list[list[str]]:
               - Convert published_at to string
               - Add ["published_at", string_value]
            c. If frontmatter.image is not None:
+              - Add ["image", frontmatter.image.url] (NIP-23 simple format)
               - Call build_imeta_tag(frontmatter.image)
-              - Add resulting imeta tag to tags list
-        4. Add content tags:
+              - Add resulting imeta tag to tags list (NIP-92 rich metadata)
+        4. Add extra tags if provided:
+           a. If extra_tags is not None and not empty:
+              - For each tag in extra_tags:
+                * Add tag to tags list (preserving order from extra_tags)
+        5. Add content tags:
            a. Sort frontmatter.tags lexicographically (case-sensitive)
            b. For each tag in sorted order:
               - Add ["t", tag]
-        5. Return tags list
+        6. Return tags list
     """
     tags = []
 
@@ -112,7 +108,14 @@ def build_tags(frontmatter: Frontmatter) -> list[list[str]]:
         tags.append(["published_at", str(frontmatter.published_at)])
 
     if frontmatter.image is not None:
+        # NIP-23 simple format for compatibility with clients like njump
+        tags.append(["image", frontmatter.image.url])
+        # NIP-92 rich metadata format for clients that support it
         tags.append(build_imeta_tag(frontmatter.image))
+
+    # Add extra tags if provided (after imeta, before content tags)
+    if extra_tags:
+        tags.extend(extra_tags)
 
     # Add content tags (sorted lexicographically)
     for tag in sorted(frontmatter.tags):

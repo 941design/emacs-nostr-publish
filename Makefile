@@ -18,8 +18,8 @@ sync: ## Sync venv with production dependencies
 sync-dev: ## Sync venv with dev dependencies
 	uv sync --extra dev
 
-install: build ## Install CLI tool globally via uv
-	uv tool install . --force
+install: ## Install CLI tool globally via uv (editable)
+	uv tool install --editable . --force
 
 build: ## Build distribution packages
 	uv build
@@ -52,7 +52,7 @@ test-emacs-unit: ## Run Emacs ERT unit tests
 		-l nostr-publish-tests.el \
 		-f ert-run-tests-batch-and-exit
 
-stack-up: ## Start local test stack (relay + signer + blossom)
+stack-up: ## Start local test stack (relay + signer + blossom + njump)
 	@NOSTR_PUBLISH_BLOSSOM_PORT=$(NOSTR_PUBLISH_BLOSSOM_PORT) envsubst < tests/integration/blossom-config.yml.template > tests/integration/blossom-config.yml
 	docker compose -f tests/integration/docker-compose.yml up -d
 
@@ -103,9 +103,9 @@ PATCH := $(word 3,$(VERSION_PARTS))
 define bump-version
 	@echo "Current version: $(CURRENT_VERSION)"
 	@echo "New version: $(1)"
-	@sed -i '' 's/^version = "$(CURRENT_VERSION)"/version = "$(1)"/' pyproject.toml
-	@sed -i '' 's/^;; Version: $(CURRENT_VERSION)/;; Version: $(1)/' nostr-publish.el
-	@sed -i '' 's/^__version__ = "$(CURRENT_VERSION)"/__version__ = "$(1)"/' src/nostr_publish/__init__.py
+	@sed -i.bak 's/^version = "$(CURRENT_VERSION)"/version = "$(1)"/' pyproject.toml && rm pyproject.toml.bak
+	@sed -i.bak 's/^;; Version: $(CURRENT_VERSION)/;; Version: $(1)/' nostr-publish.el && rm nostr-publish.el.bak
+	@sed -i.bak 's/^__version__ = "$(CURRENT_VERSION)"/__version__ = "$(1)"/' src/nostr_publish/__init__.py && rm src/nostr_publish/__init__.py.bak
 	@git add pyproject.toml nostr-publish.el src/nostr_publish/__init__.py
 	@git commit -m "chore: bump version to $(1)"
 	@echo "Version bumped to $(1) and committed"

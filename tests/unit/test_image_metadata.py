@@ -60,19 +60,27 @@ class TestParseImageField:
         assert result.alt == "An image"
         assert result.dim is None
 
-    def test_dict_with_extra_keys_ignored(self):
-        """Dict with extra keys ignores them."""
+    def test_dict_with_extra_keys_raises_error(self):
+        """Dict with unknown keys raises InvalidFieldValueError (strict mode per spec 5.5)."""
         data = {
             "url": "https://example.com/image.webp",
             "mime": "image/webp",
-            "extra_key": "should be ignored",
+            "extra_key": "should cause error",
             "another_extra": 123,
         }
-        result = parse_image_field(data)
-        assert result is not None
-        assert result.url == "https://example.com/image.webp"
-        assert result.mime == "image/webp"
-        assert not hasattr(result, "extra_key")
+        with pytest.raises(InvalidFieldValueError) as exc_info:
+            parse_image_field(data)
+        assert "unknown keys in image object" in str(exc_info.value)
+        assert "another_extra" in str(exc_info.value)
+        assert "extra_key" in str(exc_info.value)
+
+    def test_dict_with_single_unknown_key_raises_error(self):
+        """Dict with single unknown key raises InvalidFieldValueError."""
+        data = {"url": "https://example.com/image.jpg", "unknown_field": "value"}
+        with pytest.raises(InvalidFieldValueError) as exc_info:
+            parse_image_field(data)
+        assert "unknown keys in image object" in str(exc_info.value)
+        assert "unknown_field" in str(exc_info.value)
 
     def test_integer_input_raises_error(self):
         """Integer input raises InvalidFieldTypeError."""

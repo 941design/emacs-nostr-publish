@@ -326,7 +326,7 @@ On second publish with same image file, upload is skipped automatically.
 
 ### Buffer Not Recognized as Markdown
 
-**Symptom**: `C-c C-p` doesn't work
+**Symptom**: `C-c C-p` (or `M-x nostr-publish-buffer`) doesn't work
 
 **Solution**: Ensure buffer is in markdown-mode:
 ```elisp

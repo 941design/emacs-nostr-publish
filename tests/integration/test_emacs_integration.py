@@ -85,14 +85,18 @@ def test_emacs_integration_full_suite(docker_services, emacs_available):
     """Run the full Emacs integration test suite.
 
     This test runs all Emacs E2E tests in a single batch invocation.
-    Individual test results are reported in Emacs output.
+    Uses NOSTR_CLIENT_KEY for bunker authentication (pubkey-based auth).
+
+    Note: Secret-based auth (bunker URI with &secret=) is also supported at
+    the bunker level but currently has issues with the nak CLI client hanging
+    after connection. NOSTR_CLIENT_KEY is the reliable path for testing.
     """
     env_vars = {
-        "NOSTR_CLIENT_KEY": docker_services["client_secret"],
         "TEST_BUNKER_URI": docker_services["bunker_uri"],
         "TEST_RELAY_URL": docker_services["relay_url"],
         "TEST_BLOSSOM_URL": docker_services["blossom_url"],
         "TEST_FIXTURE_DIR": str(Path(__file__).parent / "fixtures"),
+        "NOSTR_CLIENT_KEY": docker_services["client_secret"],
     }
 
     result = run_emacs_tests(env_vars)

@@ -61,6 +61,8 @@ The integration test suite uses:
 
 - **nostr-rs-relay**: Local relay for event storage/retrieval
 - **nak bunker**: NIP-46 remote signer running as Docker container
+- **blossom**: Media server for cover image uploads
+- **njump**: Preview reader for article rendering
 - **nak** (host): CLI tool for signing and publishing events
 - **nostr-publish**: The CLI being tested
 

@@ -218,6 +218,23 @@ Support for automated publishing in scripts and CI pipelines
 
 **Implementation**: `nostr-publish.el:nostr-publish-buffer` (save-buffer call)
 
+#### [Implemented] Story: Preview articles before publishing
+**As an** Emacs Writer, **I want to** preview my articles locally before publishing to production, **so that** I can review the final result without risking incorrect content on production relays.
+
+**Acceptance Criteria**:
+- [x] Emacs command `nostr-publish-preview-buffer` triggers preview workflow
+- [x] Uses same validation, signing, and publishing pipeline as production
+- [x] Publishes to preview relay instead of production relay
+- [x] Uses preview bunker for signing (separate from production)
+- [x] Uploads cover images to preview Blossom server (if configured)
+- [x] Adds `x-emacs-nostr-publish: preview` tag to published event
+- [x] Never modifies source file frontmatter (no metadata write-back)
+- [x] Opens preview reader in browser with naddr (when `nostr-publish-preview-open-browser` is true)
+- [x] Configuration variables: `nostr-publish-preview-relay`, `nostr-publish-preview-bunker`, `nostr-publish-preview-blossom`, `nostr-publish-preview-reader`
+- [x] Preview errors handled identically to publish errors (fail-fast)
+
+**Implementation**: `nostr-publish.el:nostr-publish-preview-buffer`, `src/nostr_publish/cli.py` (--tag flag), documented in README.md and specs/preview.md
+
 ### Epic 3: Remote Signing & Key Management
 
 #### [Implemented] Story: Sign articles without handling private keys

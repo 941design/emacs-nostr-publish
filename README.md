@@ -18,6 +18,7 @@ Publishes Markdown files with YAML frontmatter to Nostr relays using remote sign
 - **Idempotent publishing**: Hash-based upload skip for unchanged cover images
 - **Shareable addresses**: NIP-19 naddr encoding for cross-relay article discovery
 - **Remote signing**: NIP-46 support via any compatible signer
+- **Preview mode**: Review articles before publishing using preview infrastructure (Emacs)
 - **Deterministic**: Same input always produces identical events
 - **CLI + Emacs**: Use from command line or Emacs (`C-c C-p`)
 - **JSON output**: Machine-parseable publish results for automation
@@ -131,6 +132,13 @@ Or configure variables directly:
 
 ;; Optional: Blossom server for cover image uploads (required if using cover.file)
 (setq nostr-publish-blossom-url "https://blossom.example.com")
+
+;; Preview mode configuration (optional)
+(setq nostr-publish-preview-relay "wss://preview.relay.example.com")
+(setq nostr-publish-preview-bunker "bunker://pubkey?relay=wss://preview.relay.example.com")
+(setq nostr-publish-preview-blossom "https://preview-blossom.example.com")
+(setq nostr-publish-preview-reader "https://preview.reader.example.com")
+(setq nostr-publish-preview-open-browser t)  ; Open browser after preview (default: t)
 ```
 
 > **Note**: The `:hook` (or `add-hook`) is required to enable `nostr-publish-mode`, which provides the `C-c C-p` keybinding. This minor mode binding takes precedence over markdown-mode's default `C-c C-p`.
@@ -181,6 +189,10 @@ nostr-publish article.md --bunker "bunker://..." --relay wss://relay.example.com
 nostr-publish article.md --bunker "bunker://..." --relay wss://relay.example.com \
   --blossom https://blossom.example.com --cover-size 800x400
 
+# Add arbitrary tags to the event (repeatable)
+nostr-publish article.md --bunker "bunker://..." --relay wss://relay.example.com \
+  --tag x-emacs-nostr-publish preview --tag client emacs
+
 # Show version
 nostr-publish --version
 ```
@@ -190,12 +202,43 @@ nostr-publish --version
 
 ### Emacs
 
-Open a Markdown file and press `C-c C-p` to publish as long form content to nostr.
+#### Publishing
+
+Open a Markdown file and press `C-c C-p` (or `M-x nostr-publish-buffer`) to publish as long form content to nostr.
 
 On success, Emacs displays:
 - Event ID (hex)
 - Public key (hex)
 - Article address (naddr - shareable NIP-19 encoded reference)
+
+#### Preview Mode
+
+Preview mode allows reviewing articles before publishing to production. It uses the exact same publishing pipeline but targets preview infrastructure.
+
+**Keybinding**: `C-c C-b` or `M-x nostr-publish-preview-buffer` (mnemonic: "browse" preview)
+
+**What it does**:
+- Uses the same validation and signing as production
+- Publishes to preview relay (not production)
+- Uploads cover images to preview Blossom (if configured)
+- Adds preview annotation tag (`x-emacs-nostr-publish: preview`)
+- Does NOT update source file frontmatter
+- Opens preview reader in browser (if configured)
+
+**Configuration required**:
+```elisp
+(setq nostr-publish-preview-relay "wss://preview.relay.example.com")
+(setq nostr-publish-preview-bunker "bunker://pubkey?relay=wss://preview.relay.example.com")
+(setq nostr-publish-preview-reader "https://preview.reader.example.com")
+(setq nostr-publish-preview-blossom "https://preview-blossom.example.com")  ; Optional
+```
+
+**Workflow**:
+1. Write article in Markdown
+2. Press `C-c C-b` (or `M-x nostr-publish-preview-buffer`) to preview
+3. Review in preview reader (opens automatically)
+4. Make edits if needed
+5. Press `C-c C-p` (or `M-x nostr-publish-buffer`) to publish to production when ready
 
 ### Example: Idempotent Publishing with Cover Images
 
@@ -242,7 +285,7 @@ image:
 - New upload occurs automatically
 - Frontmatter updated with new `url` and `hash`
 
-This workflow works seamlessly in Emacs with `C-c C-p` - frontmatter updates happen automatically after each publish.
+This workflow works seamlessly in Emacs with `C-c C-p` (or `M-x nostr-publish-buffer`) - frontmatter updates happen automatically after each publish.
 
 ### CLI Output Format
 
@@ -356,6 +399,7 @@ See [specs/spec.md](specs/spec.md) for complete specification.
 ## Documentation
 
 - [Specification](specs/spec.md) - Complete technical specification (v1.0)
+- [Architecture](docs/architecture.md) - Technical architecture and design patterns
 - [Local Development](docs/local-setup.md) - From source setup and local test stack
 - [Integration Tests](docs/test-setup.md) - Test architecture and fixtures
 - [Troubleshooting](docs/troubleshooting.md) - Common issues and solutions
@@ -411,7 +455,7 @@ make lint              # Run linter and formatter check
 make publish           # Publish to PyPI (requires UV_PUBLISH_TOKEN)
 make publish-test      # Publish to TestPyPI
 make stack-down        # Stop local test stack and remove volumes
-make stack-up          # Start local test stack (relay + signer + blossom)
+make stack-up          # Start local test stack (relay + signer + blossom + njump)
 make sync              # Sync venv with production dependencies
 make sync-dev          # Sync venv with dev dependencies
 make test              # Run all tests

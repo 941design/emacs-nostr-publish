@@ -41,12 +41,16 @@ DOCKER_COMPOSE_FILE = Path(__file__).parent / "docker-compose.yml"
 RELAY_URL = f"ws://localhost:{RELAY_PORT}"
 BLOSSOM_URL = f"http://localhost:{BLOSSOM_PORT}"
 
-# nak bunker with secret key '1', authorized for client key '2'
+# nak bunker with secret key '1'
 BUNKER_PUBKEY = "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798"
 # Client key '2' - authorized in bunker via --authorized-keys
 CLIENT_SECRET = "0000000000000000000000000000000000000000000000000000000000000002"
-# URL-encode the relay URL for bunker URI
+# Secret for bunker auth via --authorized-secrets (alternative to NOSTR_CLIENT_KEY)
+BUNKER_SECRET = "testauth"
+# URL-encode the relay URL for bunker URI (tests use NOSTR_CLIENT_KEY for auth)
 BUNKER_URI = f"bunker://{BUNKER_PUBKEY}?relay={quote(RELAY_URL, safe='')}"
+# Bunker URI with secret embedded (no NOSTR_CLIENT_KEY needed)
+BUNKER_URI_WITH_SECRET = f"bunker://{BUNKER_PUBKEY}?relay={quote(RELAY_URL, safe='')}&secret={BUNKER_SECRET}"
 TEST_TIMEOUT = 60
 STARTUP_TIMEOUT = 60
 
@@ -214,6 +218,7 @@ def docker_services():
         "relay_url": RELAY_URL,
         "blossom_url": BLOSSOM_URL,
         "bunker_uri": BUNKER_URI,
+        "bunker_uri_with_secret": BUNKER_URI_WITH_SECRET,
         "bunker_pubkey": BUNKER_PUBKEY,
         "client_secret": CLIENT_SECRET,
     }

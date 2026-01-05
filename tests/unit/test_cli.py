@@ -318,6 +318,7 @@ class TestParseArgumentsComprehensive:
             "blossom_timeout",
             "cover_size",
             "allow_dry_run_without_upload",
+            "extra_tags",
         }
         assert set(result.keys()) == required_keys
 
@@ -424,6 +425,7 @@ class TestMainReturnCodes:
             "blossom_url": None,
             "blossom_timeout": 30,
             "cover_size": "1200x630",
+            "extra_tags": [],
         }
         mock_read_file.return_value = "---\ntitle: test\nslug: test\n---\nBody"
         mock_parse_fm.return_value = ({"title": "test", "slug": "test"}, "Body")

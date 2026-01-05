@@ -171,6 +171,45 @@ def parse_nak_output(stdout: str) -> PublishResult:
     return PublishResult(event_id=event_id, pubkey=pubkey)
 
 
+def _check_blob_exists(file_hash: str, blossom_url: str, timeout: int = 10) -> bool:
+    """Check if a blob exists on the Blossom server.
+
+    Uses nak blossom check which performs a HEAD request to verify blob existence.
+
+    Args:
+        file_hash: SHA256 hash of the file to check
+        blossom_url: Blossom server HTTP base URL
+        timeout: Timeout in seconds for the check operation
+
+    Returns:
+        True if blob exists on server, False otherwise
+    """
+    cmd = ["nak", "blossom", "--server", blossom_url, "check", file_hash]
+
+    try:
+        process = subprocess.Popen(
+            cmd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
+        )
+    except (FileNotFoundError, OSError):
+        # If nak isn't available, assume blob doesn't exist and let upload handle it
+        return False
+
+    try:
+        process.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.wait()
+        # On timeout, assume blob doesn't exist and proceed with upload
+        return False
+    except Exception:
+        process.kill()
+        process.wait()
+        return False
+
+    # Exit code 0 means blob exists, non-zero means it doesn't
+    return process.returncode == 0
+
+
 def upload_to_blossom(file_path: str, blossom_url: str, bunker_uri: str, timeout: int = 30) -> dict[str, str]:
     """Upload file to Blossom server via nak.
 
@@ -200,33 +239,41 @@ def upload_to_blossom(file_path: str, blossom_url: str, bunker_uri: str, timeout
         - Process-isolated: nak runs as separate subprocess
         - URL normalization: if server returns relative URL, joins with blossom_url base
         - Authenticated: uses bunker_uri for NIP-46 signing of upload request
+        - Idempotent: if blob already exists, returns URL without re-uploading
 
       Algorithm:
         1. Verify file exists and is readable:
            a. Check file_path exists
            b. If not, raise BlossomUploadError
-        2. Construct nak Blossom upload command:
-           a. Command: ["nak", "blossom", "--server", blossom_url, "--sec", bunker_uri, "upload", file_path, "--json"]
+        2. Compute SHA256 hash of file:
+           a. Read file bytes
+           b. Compute hash for existence check
+        3. Determine file extension for URL construction
+        4. Check if blob already exists on server:
+           a. Run nak blossom check with computed hash
+           b. If exists (exit 0): construct URL and return immediately
+           c. If not exists: proceed with upload
+        5. Construct nak Blossom upload command:
+           a. Command: ["nak", "blossom", "--server", blossom_url, "--sec", bunker_uri, "upload", file_path]
            b. The --sec flag uses bunker_uri for NIP-46 authentication
            c. nak outputs JSON with "sha256" (hash) and "url" fields
-        3. Spawn nak subprocess:
+        6. Spawn nak subprocess:
            a. Set stdout to PIPE (for JSON result)
            b. Set stderr to PIPE (for errors)
-           c. Set timeout to timeout parameter
-        4. Wait for nak completion with timeout:
+           c. Set stdin to DEVNULL (nak reads file from path, not stdin)
+           d. Set timeout to timeout parameter
+        7. Wait for nak completion with timeout:
            a. If timeout expires: kill process, raise BlossomUploadError
-           b. If process exits non-zero:
-              - Parse stderr for error message
-              - Raise BlossomUploadError with error details
-        5. Parse nak stdout as JSON:
+           b. If process exits non-zero: raise BlossomUploadError with error details
+        8. Parse nak stdout as JSON:
            a. Extract "sha256" field as hash (required)
            b. Extract "url" field (required)
            c. If missing fields, raise BlossomUploadError
-        6. Normalize URL:
+        9. Normalize URL:
            a. If url is relative (does not start with http:// or https://):
               - Join with blossom_url base to form absolute URL
            b. If url is already absolute, use as-is
-        7. Return dictionary with hash and url
+        10. Return dictionary with hash and url
 
       Raises:
         - BlossomUploadError: Any upload failure (file not found, nak error, invalid output, timeout)
@@ -237,15 +284,45 @@ def upload_to_blossom(file_path: str, blossom_url: str, bunker_uri: str, timeout
           "url": "http://blossom.example/abc123def456.jpg"
         }
     """
+    import hashlib
+
     if not os.path.exists(file_path):
         raise BlossomUploadError(f"File not found: {file_path}")
 
+    # Compute hash locally for existence check
+    with open(file_path, "rb") as f:
+        file_hash = hashlib.sha256(f.read()).hexdigest()
+
+    # Determine file extension for URL construction
+    _, ext = os.path.splitext(file_path)
+    if ext.lower() in (".jpg", ".jpeg"):
+        url_ext = "jpeg"
+    elif ext.lower() == ".png":
+        url_ext = "png"
+    elif ext.lower() == ".gif":
+        url_ext = "gif"
+    elif ext.lower() == ".webp":
+        url_ext = "webp"
+    else:
+        url_ext = "bin"
+
+    # Check if blob already exists on server (idempotent upload)
+    if _check_blob_exists(file_hash, blossom_url, timeout):
+        # Blob exists - construct URL and return without uploading
+        constructed_url = f"{blossom_url.rstrip('/')}/{file_hash}.{url_ext}"
+        return {"hash": file_hash, "url": constructed_url}
+
+    # Blob doesn't exist - proceed with upload
     # nak blossom command: --server and --sec come before the subcommand
-    # nak blossom upload outputs JSON by default (no --json flag needed)
+    # nak blossom upload outputs JSON by default (no --json flag available)
     cmd = ["nak", "blossom", "--server", blossom_url, "--sec", bunker_uri, "upload", file_path]
 
     try:
-        process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        # stdin=DEVNULL prevents nak from detecting a piped stdin and expecting
+        # file data from stdin instead of reading the file path argument
+        process = subprocess.Popen(
+            cmd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
+        )
     except FileNotFoundError:
         raise BlossomUploadError("nak binary not found in system PATH") from None
     except OSError as e:

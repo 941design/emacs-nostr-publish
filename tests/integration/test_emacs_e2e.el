@@ -12,11 +12,21 @@
 ;; Usage:
 ;;   emacs --batch -l nostr-publish.el -l test_emacs_e2e.el -f test-emacs-e2e-run
 ;;
-;; Environment variables (must be set by caller):
-;;   NOSTR_CLIENT_KEY - client secret key for bunker authentication
-;;   TEST_BUNKER_URI  - bunker URI (e.g., bunker://pubkey?relay=...)
-;;   TEST_RELAY_URL   - relay URL (e.g., ws://localhost:8080)
-;;   TEST_FIXTURE_DIR - path to test fixtures directory
+;; Environment variables:
+;;   Required:
+;;     TEST_BUNKER_URI   - bunker URI (e.g., bunker://pubkey?relay=...)
+;;                         May include &secret=... for secret-based auth
+;;     TEST_RELAY_URL    - relay URL (e.g., ws://localhost:8080)
+;;     TEST_FIXTURE_DIR  - path to test fixtures directory
+;;   Optional:
+;;     TEST_BLOSSOM_URL  - Blossom server URL (enables image upload tests)
+;;     NOSTR_CLIENT_KEY  - NIP-46 client secret key for bunker authorization
+;;                         (alternative to &secret= in bunker URI)
+;;
+;; Authentication:
+;;   Two auth methods are supported (one required):
+;;   1. NOSTR_CLIENT_KEY env var - pubkey-based auth via --authorized-keys
+;;   2. &secret= in TEST_BUNKER_URI - secret-based auth via --authorized-secrets
 ;;
 ;; Exit codes:
 ;;   0 - all tests passed
@@ -290,6 +300,283 @@ Content.
                                         (or captured-message "no message captured")))))
           (kill-buffer))))))
 
+;;; Preview Mode Tests
+
+(defun test-emacs-e2e--test-preview-basic-publish ()
+  "Test basic preview publish workflow.
+Creates a test article, publishes it in preview mode, and verifies:
+- Success message is displayed
+- Source file is NOT modified (no naddr written back)"
+  (let* ((bunker-uri (test-emacs-e2e--get-env "TEST_BUNKER_URI"))
+         (relay-url (test-emacs-e2e--get-env "TEST_RELAY_URL"))
+         (test-content "---
+title: Preview Test Article
+slug: preview-test-article
+summary: Testing preview mode
+published_at: 1700000000
+tags:
+  - preview
+  - test
+---
+
+# Preview Test Article
+
+This article tests the preview mode workflow.
+")
+         (test-file (test-emacs-e2e--create-test-file test-content))
+         ;; Use same infrastructure for preview (in real usage, these would be separate)
+         (nostr-publish-preview-bunker bunker-uri)
+         (nostr-publish-preview-relay relay-url)
+         (nostr-publish-preview-reader "https://preview.example.com")
+         (nostr-publish-preview-blossom nil)
+         (nostr-publish-preview-open-browser nil)  ; Don't open browser in tests
+         (nostr-publish-timeout 60)
+         (captured-message nil)
+         (original-content test-content))
+
+    (cl-letf (((symbol-function 'message)
+               (lambda (fmt &rest args)
+                 (setq captured-message (apply #'format fmt args))
+                 (test-emacs-e2e--log "  message: %s" captured-message)))
+              ((symbol-function 'browse-url)
+               (lambda (_url) nil)))  ; Suppress browser
+
+      (with-current-buffer (find-file-noselect test-file)
+        (unwind-protect
+            (progn
+              (nostr-publish-preview-buffer)
+
+              ;; Verify success message
+              (unless (and captured-message
+                           (string-match "Preview published:" captured-message))
+                (test-emacs-e2e--record "preview-basic" nil
+                                        (or captured-message "no message captured"))
+                (cl-return-from test-emacs-e2e--test-preview-basic-publish nil))
+
+              ;; Re-read file and verify NO naddr was written
+              (revert-buffer t t t)
+              (let ((buffer-content (buffer-string)))
+                (if (string-match "^naddr:" buffer-content)
+                    (progn
+                      (test-emacs-e2e--record "preview-basic" nil
+                                              "naddr was written to file (should not happen in preview)")
+                      (cl-return-from test-emacs-e2e--test-preview-basic-publish nil))
+                  (test-emacs-e2e--record "preview-basic" t))))
+
+          (kill-buffer))))))
+
+(defun test-emacs-e2e--test-preview-with-image ()
+  "Test preview publish with image upload.
+Creates a test article with image.file, publishes in preview mode, and verifies:
+- Success message is displayed
+- Source file is NOT modified (no hash/url written back)"
+  (let* ((bunker-uri (test-emacs-e2e--get-env "TEST_BUNKER_URI"))
+         (relay-url (test-emacs-e2e--get-env "TEST_RELAY_URL"))
+         (blossom-url (test-emacs-e2e--get-env "TEST_BLOSSOM_URL"))
+         (fixture-dir (test-emacs-e2e--get-env "TEST_FIXTURE_DIR"))
+         (cover-image (expand-file-name "test-cover-with-exif.jpg" fixture-dir))
+         (test-content (format "---
+title: Preview with Image
+slug: preview-image-test
+summary: Testing preview mode with image upload
+published_at: 1700000000
+image:
+  file: %s
+  alt: Test preview image
+tags:
+  - preview
+  - image
+---
+
+# Preview with Image
+
+Testing preview mode with Blossom image upload.
+" cover-image))
+         (test-file (test-emacs-e2e--create-test-file test-content))
+         (nostr-publish-preview-bunker bunker-uri)
+         (nostr-publish-preview-relay relay-url)
+         (nostr-publish-preview-reader "https://preview.example.com")
+         (nostr-publish-preview-blossom blossom-url)
+         (nostr-publish-preview-open-browser nil)
+         (nostr-publish-timeout 60)
+         (captured-message nil))
+
+    ;; Verify image file exists
+    (unless (file-exists-p cover-image)
+      (test-emacs-e2e--record "preview-image" nil
+                              (format "Image file not found: %s" cover-image))
+      (cl-return-from test-emacs-e2e--test-preview-with-image nil))
+
+    (cl-letf (((symbol-function 'message)
+               (lambda (fmt &rest args)
+                 (setq captured-message (apply #'format fmt args))
+                 (test-emacs-e2e--log "  message: %s" captured-message)))
+              ((symbol-function 'browse-url)
+               (lambda (_url) nil)))
+
+      (with-current-buffer (find-file-noselect test-file)
+        (unwind-protect
+            (progn
+              (nostr-publish-preview-buffer)
+
+              ;; Verify success
+              (unless (and captured-message
+                           (string-match "Preview published:" captured-message))
+                (test-emacs-e2e--record "preview-image" nil
+                                        (or captured-message "no message captured"))
+                (cl-return-from test-emacs-e2e--test-preview-with-image nil))
+
+              ;; Re-read file and verify NO hash/url was written
+              (revert-buffer t t t)
+              (let ((buffer-content (buffer-string)))
+                (cond
+                 ((string-match "^  hash:" buffer-content)
+                  (test-emacs-e2e--record "preview-image" nil
+                                          "hash was written to file (should not happen in preview)"))
+                 ((string-match "^  url:" buffer-content)
+                  (test-emacs-e2e--record "preview-image" nil
+                                          "url was written to file (should not happen in preview)"))
+                 ((string-match "^naddr:" buffer-content)
+                  (test-emacs-e2e--record "preview-image" nil
+                                          "naddr was written to file (should not happen in preview)"))
+                 (t
+                  (test-emacs-e2e--record "preview-image" t)))))
+
+          (kill-buffer))))))
+
+(defun test-emacs-e2e--test-preview-minimal-frontmatter ()
+  "Test preview mode with minimal frontmatter (title + slug only)."
+  (let* ((bunker-uri (test-emacs-e2e--get-env "TEST_BUNKER_URI"))
+         (relay-url (test-emacs-e2e--get-env "TEST_RELAY_URL"))
+         (test-content "---
+title: Minimal Preview
+slug: minimal-preview
+---
+
+# Minimal Preview
+
+Just title and slug in preview mode.
+")
+         (test-file (test-emacs-e2e--create-test-file test-content))
+         (nostr-publish-preview-bunker bunker-uri)
+         (nostr-publish-preview-relay relay-url)
+         (nostr-publish-preview-reader "https://preview.example.com")
+         (nostr-publish-preview-blossom nil)
+         (nostr-publish-preview-open-browser nil)
+         (nostr-publish-timeout 60)
+         (captured-message nil))
+
+    (cl-letf (((symbol-function 'message)
+               (lambda (fmt &rest args)
+                 (setq captured-message (apply #'format fmt args))
+                 (test-emacs-e2e--log "  message: %s" captured-message)))
+              ((symbol-function 'browse-url)
+               (lambda (_url) nil)))
+
+      (with-current-buffer (find-file-noselect test-file)
+        (unwind-protect
+            (progn
+              (nostr-publish-preview-buffer)
+
+              (cond
+               ((and captured-message
+                     (string-match "Preview published:" captured-message))
+                (test-emacs-e2e--record "preview-minimal" t))
+               (t
+                (test-emacs-e2e--record "preview-minimal" nil
+                                        (or captured-message "no message captured")))))
+          (kill-buffer))))))
+
+(defun test-emacs-e2e--test-preview-no-config-fails ()
+  "Test that preview fails without preview configuration."
+  (let* ((test-content "---
+title: Preview No Config
+slug: preview-no-config
+---
+
+Content.
+")
+         (test-file (test-emacs-e2e--create-test-file test-content))
+         (nostr-publish-preview-bunker nil)  ; No bunker
+         (nostr-publish-preview-relay nil)   ; No relay
+         (nostr-publish-preview-reader nil)  ; No reader
+         (nostr-publish-timeout 10)
+         (error-occurred nil))
+
+    (with-current-buffer (find-file-noselect test-file)
+      (unwind-protect
+          (progn
+            (condition-case _
+                (nostr-publish-preview-buffer)
+              (error (setq error-occurred t)))
+
+            (if error-occurred
+                (test-emacs-e2e--record "preview-no-config-fails" t)
+              (test-emacs-e2e--record "preview-no-config-fails" nil
+                                      "Should have failed without preview config")))
+        (kill-buffer)))))
+
+(defun test-emacs-e2e--test-preview-file-unchanged ()
+  "Test that preview mode preserves original file exactly.
+Compares file content before and after preview to ensure no changes."
+  (let* ((bunker-uri (test-emacs-e2e--get-env "TEST_BUNKER_URI"))
+         (relay-url (test-emacs-e2e--get-env "TEST_RELAY_URL"))
+         (test-content "---
+title: File Unchanged Test
+slug: file-unchanged-test
+summary: Verifying file is not modified
+published_at: 1700000000
+tags:
+  - test
+---
+
+# File Unchanged Test
+
+This file should remain identical after preview.
+")
+         (test-file (test-emacs-e2e--create-test-file test-content))
+         (nostr-publish-preview-bunker bunker-uri)
+         (nostr-publish-preview-relay relay-url)
+         (nostr-publish-preview-reader "https://preview.example.com")
+         (nostr-publish-preview-blossom nil)
+         (nostr-publish-preview-open-browser nil)
+         (nostr-publish-timeout 60)
+         (captured-message nil)
+         ;; Read original file content from disk
+         (original-disk-content (with-temp-buffer
+                                  (insert-file-contents test-file)
+                                  (buffer-string))))
+
+    (cl-letf (((symbol-function 'message)
+               (lambda (fmt &rest args)
+                 (setq captured-message (apply #'format fmt args))
+                 (test-emacs-e2e--log "  message: %s" captured-message)))
+              ((symbol-function 'browse-url)
+               (lambda (_url) nil)))
+
+      (with-current-buffer (find-file-noselect test-file)
+        (unwind-protect
+            (progn
+              (nostr-publish-preview-buffer)
+
+              ;; Verify success first
+              (unless (and captured-message
+                           (string-match "Preview published:" captured-message))
+                (test-emacs-e2e--record "preview-file-unchanged" nil
+                                        (or captured-message "no message captured"))
+                (cl-return-from test-emacs-e2e--test-preview-file-unchanged nil))
+
+              ;; Read file content from disk again and compare
+              (let ((final-disk-content (with-temp-buffer
+                                          (insert-file-contents test-file)
+                                          (buffer-string))))
+                (if (string= original-disk-content final-disk-content)
+                    (test-emacs-e2e--record "preview-file-unchanged" t)
+                  (test-emacs-e2e--record "preview-file-unchanged" nil
+                                          "File content was modified during preview"))))
+
+          (kill-buffer))))))
+
 ;;; Test Runner
 
 (defun test-emacs-e2e-run ()
@@ -302,8 +589,6 @@ Content.
   (condition-case err
       (progn
         (test-emacs-e2e--log "Environment:")
-        (test-emacs-e2e--log "  NOSTR_CLIENT_KEY: %s"
-                            (if (getenv "NOSTR_CLIENT_KEY") "[set]" "[NOT SET]"))
         (test-emacs-e2e--log "  TEST_BUNKER_URI: %s"
                             (or (getenv "TEST_BUNKER_URI") "[NOT SET]"))
         (test-emacs-e2e--log "  TEST_RELAY_URL: %s"
@@ -323,12 +608,25 @@ Content.
         (test-emacs-e2e--log "Running tests...")
         (test-emacs-e2e--log "")
 
+        ;; Production publish tests
         (test-emacs-e2e--test-basic-publish)
         (test-emacs-e2e--test-minimal-frontmatter)
         (test-emacs-e2e--test-no-bunker-fails)
         ;; Image writeback test requires TEST_BLOSSOM_URL and TEST_FIXTURE_DIR
         (when (and (getenv "TEST_BLOSSOM_URL") (getenv "TEST_FIXTURE_DIR"))
-          (test-emacs-e2e--test-image-writeback)))
+          (test-emacs-e2e--test-image-writeback))
+
+        ;; Preview mode tests
+        (test-emacs-e2e--log "")
+        (test-emacs-e2e--log "Running preview mode tests...")
+        (test-emacs-e2e--log "")
+        (test-emacs-e2e--test-preview-no-config-fails)
+        (test-emacs-e2e--test-preview-basic-publish)
+        (test-emacs-e2e--test-preview-minimal-frontmatter)
+        (test-emacs-e2e--test-preview-file-unchanged)
+        ;; Preview with image test requires TEST_BLOSSOM_URL and TEST_FIXTURE_DIR
+        (when (and (getenv "TEST_BLOSSOM_URL") (getenv "TEST_FIXTURE_DIR"))
+          (test-emacs-e2e--test-preview-with-image)))
     (error
      (test-emacs-e2e--log "ERROR during tests: %s" (error-message-string err))
      (test-emacs-e2e--cleanup)

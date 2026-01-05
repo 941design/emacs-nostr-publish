@@ -588,6 +588,12 @@ def bunker_uris(draw):
 class TestUploadToBlossom:
     """Property-based tests for upload_to_blossom function."""
 
+    @pytest.fixture(autouse=True)
+    def mock_blob_check(self):
+        """Mock _check_blob_exists to return False so upload path is tested."""
+        with patch("nostr_publish.nak._check_blob_exists", return_value=False):
+            yield
+
     @given(hash_val=blob_hashes(), url=http_urls(), base_url=blossom_base_urls(), bunker_uri=bunker_uris())
     def test_upload_to_blossom_success_with_absolute_url(self, hash_val, url, base_url, bunker_uri):
         """Property: successful upload with absolute URL returns hash and URL."""
@@ -719,6 +725,61 @@ class TestUploadToBlossom:
 
                 with pytest.raises(BlossomUploadError, match="Blossom upload failed \\(exit code 1\\)"):
                     upload_to_blossom(tmp_path, base_url, bunker_uri)
+        finally:
+            os.unlink(tmp_path)
+
+    def test_upload_to_blossom_skips_upload_when_blob_exists(self):
+        """Property: If blob exists on server, skip upload and return constructed URL."""
+        base_url = "http://blossom.example.com"
+        bunker_uri = (
+            "bunker://79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798?relay=ws://localhost:8080"
+        )
+
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as tmp:
+            tmp_path = tmp.name
+            tmp.write(b"test image content")
+
+        try:
+            # Override the autouse mock to return True (blob exists)
+            with patch("nostr_publish.nak._check_blob_exists", return_value=True) as mock_check:
+                result = upload_to_blossom(tmp_path, base_url, bunker_uri)
+
+                # Should return success with constructed URL without calling upload
+                assert "hash" in result
+                assert "url" in result
+                assert len(result["hash"]) == 64  # SHA256 hex
+                assert result["url"].startswith(base_url.rstrip("/") + "/")
+                assert result["url"].endswith(".jpeg")
+                # Check was called with the file hash
+                mock_check.assert_called_once()
+        finally:
+            os.unlink(tmp_path)
+
+    @given(base_url=blossom_base_urls(), bunker_uri=bunker_uris())
+    def test_upload_to_blossom_uploads_when_blob_not_exists(self, base_url, bunker_uri):
+        """Property: If blob doesn't exist on server, proceed with upload."""
+        # This test uses the autouse mock_blob_check fixture which returns False
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as tmp:
+            tmp_path = tmp.name
+            tmp.write(b"test image content")
+
+        try:
+            with patch("subprocess.Popen") as mock_popen:
+                mock_process = MagicMock()
+                mock_process.communicate.return_value = (
+                    '{"sha256": "abc123def456", "url": "http://example.com/abc123def456.jpg"}',
+                    "",
+                )
+                mock_process.returncode = 0
+                mock_popen.return_value = mock_process
+
+                result = upload_to_blossom(tmp_path, base_url, bunker_uri)
+
+                # Should return result from actual upload
+                assert result["hash"] == "abc123def456"
+                assert result["url"] == "http://example.com/abc123def456.jpg"
+                # Upload subprocess was called
+                mock_popen.assert_called_once()
         finally:
             os.unlink(tmp_path)
 
@@ -895,7 +956,7 @@ class TestUploadToBlossom:
                 assert base_url in called_cmd
                 assert "--sec" in called_cmd
                 assert bunker_uri in called_cmd
-                # nak blossom upload outputs JSON by default, no --json flag needed
+                # nak blossom upload outputs JSON by default, no --json flag available
         finally:
             os.unlink(tmp_path)
 
@@ -1109,3 +1170,89 @@ class TestUploadToBlossom:
                     upload_to_blossom(tmp_path, base_url, bunker_uri)
         finally:
             os.unlink(tmp_path)
+
+
+class TestCheckBlobExists:
+    """Tests for _check_blob_exists helper function."""
+
+    def test_check_blob_exists_returns_true_when_found(self):
+        """Property: Returns True when nak blossom check exits with code 0."""
+        with patch("subprocess.Popen") as mock_popen:
+            mock_process = MagicMock()
+            mock_process.communicate.return_value = ("abc123", "")
+            mock_process.returncode = 0
+            mock_popen.return_value = mock_process
+
+            from nostr_publish.nak import _check_blob_exists
+
+            result = _check_blob_exists("abc123", "http://localhost:3000")
+
+            assert result is True
+            mock_popen.assert_called_once()
+            # Verify command structure
+            call_args = mock_popen.call_args[0][0]
+            assert call_args[0] == "nak"
+            assert call_args[1] == "blossom"
+            assert "--server" in call_args
+            assert "check" in call_args
+            assert "abc123" in call_args
+
+    def test_check_blob_exists_returns_false_when_not_found(self):
+        """Property: Returns False when nak blossom check exits with non-zero code."""
+        with patch("subprocess.Popen") as mock_popen:
+            mock_process = MagicMock()
+            mock_process.communicate.return_value = ("", "not found")
+            mock_process.returncode = 1
+            mock_popen.return_value = mock_process
+
+            from nostr_publish.nak import _check_blob_exists
+
+            result = _check_blob_exists("abc123", "http://localhost:3000")
+
+            assert result is False
+
+    def test_check_blob_exists_returns_false_on_timeout(self):
+        """Property: Returns False when check times out."""
+        import subprocess
+
+        with patch("subprocess.Popen") as mock_popen:
+            mock_process = MagicMock()
+            mock_process.communicate.side_effect = subprocess.TimeoutExpired("cmd", 10)
+            mock_process.kill = MagicMock()
+            mock_process.wait = MagicMock()
+            mock_popen.return_value = mock_process
+
+            from nostr_publish.nak import _check_blob_exists
+
+            result = _check_blob_exists("abc123", "http://localhost:3000", timeout=10)
+
+            assert result is False
+            mock_process.kill.assert_called_once()
+
+    def test_check_blob_exists_returns_false_when_nak_not_found(self):
+        """Property: Returns False when nak binary is not found."""
+        with patch("subprocess.Popen") as mock_popen:
+            mock_popen.side_effect = FileNotFoundError("nak not found")
+
+            from nostr_publish.nak import _check_blob_exists
+
+            result = _check_blob_exists("abc123", "http://localhost:3000")
+
+            assert result is False
+
+    def test_check_blob_exists_uses_stdin_devnull(self):
+        """Property: Uses stdin=DEVNULL to avoid pipe detection issues."""
+        import subprocess
+
+        with patch("subprocess.Popen") as mock_popen:
+            mock_process = MagicMock()
+            mock_process.communicate.return_value = ("", "")
+            mock_process.returncode = 0
+            mock_popen.return_value = mock_process
+
+            from nostr_publish.nak import _check_blob_exists
+
+            _check_blob_exists("abc123", "http://localhost:3000")
+
+            call_kwargs = mock_popen.call_args[1]
+            assert call_kwargs.get("stdin") == subprocess.DEVNULL

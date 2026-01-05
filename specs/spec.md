@@ -13,7 +13,7 @@ Provide a **deterministic, cross-platform publishing workflow** for long-form wr
 * Supports **cover images** with local file upload via Blossom servers
 * Supports invocation from:
 
-  * **Emacs** (`C-c C-p`)
+  * **Emacs** (`C-c C-p` or `M-x nostr-publish-buffer`)
   * **CLI** (`nostr-publish FILE.md`)
 
 No private keys are handled locally.
@@ -214,13 +214,19 @@ When `image.file` is present, publishing MUST ensure that:
 
 ### 5.7 Tag Mapping for Images
 
-When an image is specified, an `imeta` tag is added to the event following NIP-92 format:
+When an image is specified, **two tags** are added to the event for maximum compatibility:
 
-```
-["imeta", "url <URL>", "m <MIME>", "alt <ALT>", "dim <DIMENSIONS>"]
-```
+1. **NIP-23 simple format** (for clients like njump):
+   ```
+   ["image", "<URL>"]
+   ```
 
-Only fields that are present (or successfully inferred) are included in the imeta tag.
+2. **NIP-92 rich metadata format** (for clients that support it):
+   ```
+   ["imeta", "url <URL>", "m <MIME>", "alt <ALT>", "dim <DIMENSIONS>"]
+   ```
+
+The `image` tag appears first, followed by `imeta`. Only fields that are present (or successfully inferred) are included in the imeta tag.
 
 ### 5.8 Publication Rule
 
@@ -294,14 +300,20 @@ Tags must be generated exactly in this order:
 2. `["title", title]`
 3. `["summary", summary]` (only if present)
 4. `["published_at", "<published_at>"]` (only if present; integer string)
-5. `["imeta", "url <URL>", ...]` (only if cover field present; NIP-92 format)
-6. For each tag in `tags` (after trim + dedupe), **sorted lexicographically**:
+5. `["image", "<URL>"]` (only if cover field present; NIP-23 simple format)
+6. `["imeta", "url <URL>", ...]` (only if cover field present; NIP-92 format)
+7. For each injected tag via `--tag KEY VALUE` (in CLI flag order):
+
+   * `["KEY", "VALUE"]`
+
+8. For each tag in `tags` (after trim + dedupe), **sorted lexicographically**:
 
    * `["t", tag]`
 
-The `imeta` tag format follows NIP-92, containing space-separated key-value pairs for image metadata. Only fields that are present or successfully inferred are included.
+The `image` tag uses NIP-23 simple format for compatibility with clients like njump.
+The `imeta` tag uses NIP-92 format with space-separated key-value pairs for rich image metadata. Only fields that are present or successfully inferred are included.
 
-No additional tags beyond those listed above are permitted.
+Injected tags (from `--tag` flags) appear after structural metadata (d, title, summary, published_at, image, imeta) and before content tags (t tags). This positioning ensures client-specific annotations don't interfere with core metadata while remaining discoverable.
 
 ---
 
@@ -430,6 +442,7 @@ nostr-publish FILE.md
   [--blossom-timeout SECONDS]
   [--cover-size WxH]
   [--allow-dry-run-without-upload]
+  [--tag KEY VALUE]
 ```
 
 ### 12.2 Flags
@@ -444,6 +457,7 @@ nostr-publish FILE.md
 | `--blossom-timeout`              | No                       | 30       | Blossom upload timeout in seconds                 |
 | `--cover-size`                   | No                       | 1200x630 | Target cover dimensions (WxH format)              |
 | `--allow-dry-run-without-upload` | No                       | false    | Allow dry-run with image.file without Blossom URL |
+| `--tag`                          | No (repeatable)          | -        | Add arbitrary tag to event (key-value pair)       |
 
 ### 12.3 Behavior
 
@@ -453,6 +467,10 @@ nostr-publish FILE.md
 * `--dry-run` performs parse + validation + event construction, but does not publish or upload
 * `--timeout` applies to signer interaction and publish operations; timeout expiry is a fatal error
 * `--blossom` is required when `image.file` is present (unless `--dry-run` with `--allow-dry-run-without-upload`)
+* `--tag` accepts two string arguments (KEY and VALUE) and injects the tag `["KEY", "VALUE"]` into the event
+* Multiple `--tag` flags allowed (each adds one tag to the event)
+* Injected tags appear in the event after structural metadata tags and before content tags
+* Tag ordering is deterministic (order matches CLI flag order)
 
 ### 12.4 JSON Output Format (Breaking Change)
 
@@ -565,7 +583,7 @@ The naddr encoding provides a shareable, human-friendly reference to published a
 
 ### 15.2 User Command
 
-* Keybinding: `C-c C-p` (user-configurable)
+* Keybinding: `C-c C-p` or `M-x nostr-publish-buffer` (user-configurable)
 * Interactive command publishes current buffer
 
 ### 15.3 Configuration Variables
@@ -628,6 +646,46 @@ When publishing from Emacs and naddr encoding succeeds:
 * If `naddr` field does not exist, add it after the last existing field
 * Buffer MUST be marked modified and automatically saved after write-back
 * naddr write-back uses same atomicity guarantees as image write-back (Section 20.2)
+
+### 15.10 Preview Mode
+
+Preview Mode allows authors to review articles before publishing to production using preview infrastructure.
+
+**Command**: `nostr-publish-preview-buffer` (Emacs interactive command)
+
+**Configuration Variables**:
+
+| Variable                             | Type    | Description                             |
+|--------------------------------------|---------|-----------------------------------------|
+| `nostr-publish-preview-relay`        | string  | Preview relay URL (required)            |
+| `nostr-publish-preview-bunker`       | string  | Preview bunker URI (required)           |
+| `nostr-publish-preview-blossom`      | string  | Preview Blossom server URL (optional)   |
+| `nostr-publish-preview-reader`       | string  | Preview reader URL base (required)      |
+| `nostr-publish-preview-open-browser` | boolean | Open browser after preview (default: t) |
+
+**Behavior**:
+
+* Uses same Python CLI and publishing pipeline as production
+* Invokes CLI with preview configuration:
+  * `--relay <nostr-publish-preview-relay>`
+  * `--bunker <nostr-publish-preview-bunker>`
+  * `--blossom <nostr-publish-preview-blossom>` (if configured and `image.file` present)
+  * `--tag x-emacs-nostr-publish preview` (client annotation tag)
+* Uses real NIP-46 signing (no test keys or mock signing)
+* Uploads cover images to preview Blossom normally (if configured)
+* Publishes to preview relay only
+* **Never modifies source file** (no frontmatter write-back)
+* Opens preview reader in browser with naddr (if `nostr-publish-preview-open-browser` is true)
+* Error handling identical to production publish (fail-fast)
+
+**Preview Event Annotation**:
+
+* Preview events include tag: `["x-emacs-nostr-publish", "preview"]`
+* Tag is advisory-only (not a security boundary)
+* Relays and clients may ignore the tag
+* Containment relies on infrastructure selection (relay, Blossom, reader)
+
+**See Also**: Full specification in `specs/preview.md`
 
 ---
 
@@ -881,5 +939,145 @@ All user-supplied and externally-sourced data must be validated before use:
 **Implementation:**
 * Python: `subprocess.run()` with argument list (not shell string)
 * Emacs: `call-process` with argument list (not `shell-command` with interpolation)
+
+---
+
+## 21. Preview Mode
+
+### 21.1 Purpose
+
+Preview Mode allows authors to render and review an article **before publishing to production**, using the **exact same publishing pipeline** as production, while targeting **preview infrastructure** and annotating the resulting event for identification.
+
+Preview Mode:
+* Uses the same Python CLI and code paths as normal publishing
+* Uses real signing identity via NIP-46 bunker
+* Uploads media via Blossom as usual
+* Publishes to explicitly configured preview infrastructure
+* Adds a client-specific annotation tag identifying the event as a preview
+* Never writes back metadata to the source file
+
+### 21.2 Conceptual Model
+
+Preview Mode is **not** a separate execution mode in the Python CLI. Instead, it is an **Emacs invocation profile** that:
+* Supplies preview-specific infrastructure endpoints
+* Supplies additional event tags
+* Suppresses post-publish side effects (file updates)
+* Opens the result in a local preview reader
+
+The Python script remains generic and environment-agnostic.
+
+### 21.3 Infrastructure Isolation
+
+Isolation is achieved by **relay and service selection**, not by event semantics:
+
+| Component           | Preview Behavior                |
+|---------------------|---------------------------------|
+| Signing identity    | User's real identity via bunker |
+| Relay               | Preview relay only              |
+| Blossom             | Preview Blossom                 |
+| Reader              | Preview reader                  |
+| Event annotation    | Client-specific preview tag     |
+| Metadata write-back | Disabled                        |
+
+### 21.4 Signing Model
+
+* Preview Mode **always uses NIP-46 signing via bunker**
+* The same signing path as production is used
+* `--bunker` is required
+* No mock or test signing exists
+
+### 21.5 Relay Behavior
+
+* Emacs MUST pass exactly one relay via `--relay`
+* That relay MUST be the configured preview relay
+* Python publishes to the relay provided, without special handling
+
+### 21.6 Image Handling
+
+Preview Mode uses the **standard image pipeline**:
+* If `image.file` is present, Emacs MUST pass `--blossom` pointing to the preview Blossom
+* Image is processed and uploaded normally
+* `imeta` is generated from the uploaded asset
+* No "skip upload" behavior exists in preview
+
+### 21.7 Event Annotation
+
+Preview events MUST include the following tag:
+```json
+["x-emacs-nostr-publish", "preview"]
+```
+
+This tag:
+* Is injected by Emacs at invocation time
+* Is included verbatim in the published event
+* MUST NOT be relied upon for safety, isolation, or publication control
+* MAY be ignored by relays and clients
+
+### 21.8 Arbitrary Tag Support (CLI)
+
+The Python CLI MUST support accepting **arbitrary event tags** as key–value pairs via CLI arguments:
+* Tags provided via repeatable `--tag KEY VALUE` flag
+* Each tag is a string key and string value
+* Tags are included in the event's `tags` array
+* No interpretation or enforcement of tag semantics
+* Injected tags appear after `imeta` but before `t` tags
+* Ordering remains deterministic
+
+### 21.9 Emacs Integration
+
+**Preview Configuration Variables:**
+* `nostr-publish-preview-relay` (string, required)
+* `nostr-publish-preview-bunker` (string, required)
+* `nostr-publish-preview-blossom` (string, optional)
+* `nostr-publish-preview-reader` (string, required)
+* `nostr-publish-preview-open-browser` (boolean, default true)
+
+**CLI Invocation:**
+When preview is requested, Emacs invokes the Python CLI with:
+* `--relay <preview-relay>`
+* `--bunker <preview-bunker>`
+* `--blossom <preview-blossom>` (if configured)
+* `--tag x-emacs-nostr-publish preview`
+* All other arguments identical to normal publish
+
+**Browser Behavior:**
+* Emacs opens the preview reader after successful publish
+* Python does not open a browser
+* Reader URL constructed from `nostr-publish-preview-reader` + returned `naddr`
+
+**Keybinding:**
+* `C-c C-b` or `M-x nostr-publish-preview-buffer` (mnemonic: "browse" preview)
+
+### 21.10 File System Behavior
+
+In Preview Mode:
+* The source file MUST NOT be modified
+* No frontmatter fields are added or updated
+* No publication metadata is written back
+
+### 21.11 Error Handling
+
+Preview errors are treated identically to publish errors:
+* Validation failures are fatal
+* Missing required flags are fatal
+* Upload, signing, or relay failures abort the preview
+* No preview-specific error suppression exists
+
+### 21.12 Security Considerations
+
+* Preview events are signed by the real user identity
+* Preview events are real and protocol-valid
+* Containment relies on relay and infrastructure choice
+* The preview tag is not a security boundary
+
+### 21.13 Acceptance Criteria
+
+* Python CLI accepts and emits arbitrary key–value tags via `--tag`
+* Preview invocation injects `x-emacs-nostr-publish=preview` tag
+* Preview uses bunker and Blossom normally
+* Preview publishes only to the relay provided by Emacs
+* Preview never modifies the source file
+* Preview opens the configured reader with the resulting `naddr`
+* No test keys, skipped uploads, or preview-only code paths exist
 
 ---

@@ -131,8 +131,8 @@ def main(argv: list[str] | None = None) -> int:
                 frontmatter.image.dim = cover_metadata["dim"]
                 frontmatter.image.mime = cover_metadata["mime"]
 
-        # Construct event
-        event = construct_event(frontmatter, body)
+        # Construct event (with optional extra tags)
+        event = construct_event(frontmatter, body, args["extra_tags"])
 
         # Resolve relays (CLI serves as allowlist + defaults per spec section 7)
         relays = resolve_relays(args["relays"], frontmatter.relays)
@@ -207,6 +207,7 @@ def parse_arguments(argv: list[str]) -> dict:
           * blossom_timeout: positive integer
           * cover_size: string in WxH format
           * allow_dry_run_without_upload: boolean
+          * extra_tags: list of tag arrays, each [key, value]
 
       Invariants:
         - file argument is required (first positional)
@@ -275,6 +276,17 @@ def parse_arguments(argv: list[str]) -> dict:
     # Add cover image upload arguments
     add_cover_arguments(parser)
 
+    # Add arbitrary tag injection support
+    parser.add_argument(
+        "--tag",
+        dest="tags",
+        action="append",
+        nargs=2,
+        metavar=("KEY", "VALUE"),
+        default=[],
+        help="Add arbitrary tag to event (repeatable). Each tag is a key-value pair.",
+    )
+
     parsed = parser.parse_args(argv)
 
     # Validate at least one relay is provided
@@ -288,6 +300,21 @@ def parse_arguments(argv: list[str]) -> dict:
     if parsed.timeout <= 0:
         parser.error("--timeout must be a positive integer")
 
+    # Validate tag keys and values
+    core_tag_keys = {"d", "title", "summary", "published_at", "imeta", "t"}
+    if parsed.tags:
+        for key, value in parsed.tags:
+            # Reject core tag keys
+            if key in core_tag_keys:
+                parser.error(f"Cannot override core tag '{key}' via --tag")
+
+            # Reject tag values with newlines or control characters
+            if any(ord(c) < 32 for c in value):
+                parser.error(f"Tag value for '{key}' contains invalid control characters")
+
+    # Convert tags to list of [key, value] arrays
+    extra_tags = [[key, value] for key, value in parsed.tags] if parsed.tags else []
+
     return {
         "file": Path(parsed.file),
         "bunker_uri": parsed.bunker_uri,
@@ -298,6 +325,7 @@ def parse_arguments(argv: list[str]) -> dict:
         "blossom_timeout": getattr(parsed, "blossom_timeout", 30),
         "cover_size": getattr(parsed, "cover_size", "1200x630"),
         "allow_dry_run_without_upload": getattr(parsed, "allow_dry_run_without_upload", False),
+        "extra_tags": extra_tags,
     }
 
 

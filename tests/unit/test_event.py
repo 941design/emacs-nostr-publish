@@ -96,9 +96,9 @@ class TestBuildTagsOrdering:
 
     @given(frontmatter_strategy())
     def test_no_extra_tags(self, frontmatter):
-        """Only d, title, summary, published_at, imeta, and t tags are allowed."""
+        """Only d, title, summary, published_at, image, imeta, and t tags are allowed."""
         tags = build_tags(frontmatter)
-        allowed_names = {"d", "title", "summary", "published_at", "imeta", "t"}
+        allowed_names = {"d", "title", "summary", "published_at", "image", "imeta", "t"}
         for tag in tags:
             assert tag[0] in allowed_names
 
@@ -177,7 +177,10 @@ class TestBuildTagsCompleteness:
 
     @given(frontmatter_strategy())
     def test_tag_count_correct(self, frontmatter):
-        """Tag count must match formula: 2 + (summary?1:0) + (published_at?1:0) + (image?1:0) + len(tags)."""
+        """Tag count must match formula: 2 + (summary?1:0) + (published_at?1:0) + (image?2:0) + len(tags).
+
+        Note: When image is present, both ["image", url] and ["imeta", ...] tags are added (2 tags).
+        """
         tags = build_tags(frontmatter)
         expected_count = 2
         if frontmatter.summary is not None:
@@ -185,7 +188,7 @@ class TestBuildTagsCompleteness:
         if frontmatter.published_at is not None:
             expected_count += 1
         if frontmatter.image is not None:
-            expected_count += 1
+            expected_count += 2  # Both image and imeta tags
         expected_count += len(frontmatter.tags)
         assert len(tags) == expected_count
 
@@ -348,6 +351,80 @@ class TestBuildTagsImeta:
         assert imeta_tag == expected_tag
 
 
+class TestBuildTagsImageTag:
+    """Property tests for NIP-23 image tag (simple format for compatibility).
+
+    NIP-23 clients like njump expect ["image", url] tag for article cover images.
+    This must be present alongside the NIP-92 imeta tag for full compatibility.
+    """
+
+    @given(frontmatter_strategy())
+    def test_image_tag_present_when_image_present(self, frontmatter):
+        """Simple image tag must be present when frontmatter.image is not None.
+
+        NIP-23 specifies ["image", url] for long-form article cover images.
+        This ensures compatibility with clients like njump that don't support imeta.
+        """
+        assume(frontmatter.image is not None)
+        tags = build_tags(frontmatter)
+        image_tags = [tag for tag in tags if tag[0] == "image"]
+        assert len(image_tags) == 1, "Expected one ['image', url] tag for cover image"
+        assert image_tags[0] == ["image", frontmatter.image.url]
+
+    @given(frontmatter_strategy())
+    def test_image_tag_absent_when_image_absent(self, frontmatter):
+        """image tag must not be present when frontmatter.image is None."""
+        assume(frontmatter.image is None)
+        tags = build_tags(frontmatter)
+        image_tags = [tag for tag in tags if tag[0] == "image"]
+        assert len(image_tags) == 0
+
+    @given(frontmatter_strategy(require_image=True))
+    def test_image_tag_position_before_imeta(self, frontmatter):
+        """image tag must appear before imeta tag (NIP-23 before NIP-92)."""
+        tags = build_tags(frontmatter)
+        image_idx = next(i for i, tag in enumerate(tags) if tag[0] == "image")
+        imeta_idx = next(i for i, tag in enumerate(tags) if tag[0] == "imeta")
+        assert image_idx < imeta_idx, "image tag must come before imeta tag"
+
+    @given(frontmatter_strategy(require_image=True))
+    def test_image_tag_after_published_at(self, frontmatter):
+        """image tag must appear after published_at if present."""
+        assume(frontmatter.published_at is not None)
+        tags = build_tags(frontmatter)
+        published_idx = next(i for i, tag in enumerate(tags) if tag[0] == "published_at")
+        image_idx = next(i for i, tag in enumerate(tags) if tag[0] == "image")
+        assert image_idx > published_idx
+
+    @given(frontmatter_strategy(require_image=True))
+    def test_image_tag_before_content_tags(self, frontmatter):
+        """image tag must appear before content tags."""
+        assume(len(frontmatter.tags) > 0)
+        tags = build_tags(frontmatter)
+        image_idx = next(i for i, tag in enumerate(tags) if tag[0] == "image")
+        content_indices = [i for i, tag in enumerate(tags) if tag[0] == "t"]
+        assert all(image_idx < ci for ci in content_indices)
+
+    def test_image_and_imeta_both_present(self):
+        """Both image and imeta tags must be present for full compatibility."""
+        image = ImageMetadata(url="https://example.com/cover.jpg", mime="image/jpeg", alt="Cover image", dim="1200x800")
+        frontmatter = Frontmatter(title="Test", slug="test", image=image)
+        tags = build_tags(frontmatter)
+
+        # Both tags must be present
+        image_tags = [tag for tag in tags if tag[0] == "image"]
+        imeta_tags = [tag for tag in tags if tag[0] == "imeta"]
+        assert len(image_tags) == 1, "Missing NIP-23 image tag"
+        assert len(imeta_tags) == 1, "Missing NIP-92 imeta tag"
+
+        # image tag contains URL directly
+        assert image_tags[0] == ["image", "https://example.com/cover.jpg"]
+
+        # imeta tag contains rich metadata
+        assert imeta_tags[0][0] == "imeta"
+        assert "url https://example.com/cover.jpg" in imeta_tags[0]
+
+
 class TestConstructEvent:
     """Property tests for construct_event function."""
 
@@ -415,7 +492,7 @@ class TestEdgeCases:
         if frontmatter.published_at is not None:
             expected_count += 1
         if frontmatter.image is not None:
-            expected_count += 1
+            expected_count += 2  # Both image and imeta tags
         assert len(tags) == expected_count
 
     def test_zero_published_at(self):
@@ -524,7 +601,7 @@ class TestEdgeCases:
         assert tag[2] == "alt Image with  multiple  spaces"
 
     def test_full_event_with_imeta(self):
-        """Full event construction with image metadata."""
+        """Full event construction with image metadata (NIP-23 image + NIP-92 imeta)."""
         image = ImageMetadata(url="https://example.com/cover.jpg", mime="image/jpeg", alt="Cover image", dim="1200x800")
         frontmatter = Frontmatter(
             title="Test Article",
@@ -537,25 +614,27 @@ class TestEdgeCases:
         event = construct_event(frontmatter, "# Content")
         assert event.kind == 30023
         assert event.content == "# Content"
-        assert len(event.tags) == 7
+        assert len(event.tags) == 8  # Added image tag
         assert event.tags[0] == ["d", "test-article"]
         assert event.tags[1] == ["title", "Test Article"]
         assert event.tags[2] == ["summary", "A test summary"]
         assert event.tags[3] == ["published_at", "1700000000"]
-        assert event.tags[4][0] == "imeta"
-        assert event.tags[5] == ["t", "example"]
-        assert event.tags[6] == ["t", "test"]
+        assert event.tags[4] == ["image", "https://example.com/cover.jpg"]  # NIP-23 simple format
+        assert event.tags[5][0] == "imeta"  # NIP-92 rich metadata
+        assert event.tags[6] == ["t", "example"]
+        assert event.tags[7] == ["t", "test"]
 
     def test_imeta_position_with_optional_fields(self):
-        """imeta tag positioned correctly even when optional fields are missing."""
+        """image and imeta tags positioned correctly even when optional fields are missing."""
         image = ImageMetadata(url="https://example.com/image.jpg")
         frontmatter = Frontmatter(title="Test", slug="test", published_at=1700000000, tags=["tag1"], image=image)
         tags = build_tags(frontmatter)
         assert tags[0][0] == "d"
         assert tags[1][0] == "title"
         assert tags[2][0] == "published_at"
-        assert tags[3][0] == "imeta"
-        assert tags[4][0] == "t"
+        assert tags[3][0] == "image"  # NIP-23 simple format
+        assert tags[4][0] == "imeta"  # NIP-92 rich metadata
+        assert tags[5][0] == "t"
 
     def test_backwards_compatibility_no_image(self):
         """Existing frontmatter without image still works correctly."""

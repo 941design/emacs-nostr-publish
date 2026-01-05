@@ -1,0 +1,5 @@
+{
+  "everything": ["ws://relay:8080"],
+  "profiles": ["ws://relay:8080"],
+  "justIds": ["ws://relay:8080"]
+}

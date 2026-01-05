@@ -48,6 +48,7 @@ Available variables (with defaults):
 |------------------------------|---------|----------------------|
 | `NOSTR_PUBLISH_RELAY_PORT`   | 8080    | Relay WebSocket port |
 | `NOSTR_PUBLISH_BLOSSOM_PORT` | 3000    | Blossom HTTP port    |
+| `NOSTR_PUBLISH_NJUMP_PORT`   | 2999    | njump preview reader |
 
 The Makefile and test suite automatically load these values.
 
@@ -61,17 +62,18 @@ This starts:
 - **nostr-rs-relay** on `ws://localhost:${NOSTR_PUBLISH_RELAY_PORT}` (default: 8080)
 - **nak bunker** - NIP-46 remote signer with test keys
 - **blossom** on `http://localhost:${NOSTR_PUBLISH_BLOSSOM_PORT}` (default: 3000)
+- **njump** on `http://localhost:${NOSTR_PUBLISH_NJUMP_PORT}` (default: 2999) - preview reader
 
 ### Test Stack Credentials
 
-The local signer uses fixed test keys. With default ports:
+The local signer uses fixed test keys with secret-based authentication. With default ports:
 
-| Component     | Value                                                                                                         |
-|---------------|---------------------------------------------------------------------------------------------------------------|
-| Bunker URI    | `bunker://79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798?relay=ws%3A%2F%2Flocalhost%3A8080` |
-| Relay URL     | `ws://localhost:8080`                                                                                         |
-| Blossom URL   | `http://localhost:3000`                                                                                       |
-| Client Secret | `0000000000000000000000000000000000000000000000000000000000000002`                                            |
+| Component   | Value                                                                                                                         |
+|-------------|-------------------------------------------------------------------------------------------------------------------------------|
+| Bunker URI  | `bunker://79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798?relay=ws%3A%2F%2Flocalhost%3A8080&secret=testauth` |
+| Relay URL   | `ws://localhost:8080`                                                                                                         |
+| Blossom URL | `http://localhost:3000`                                                                                                       |
+| njump URL   | `http://localhost:2999`                                                                                                       |
 
 If you change the relay port, update the `relay=` parameter in the bunker URI accordingly (URL-encoded).
 
@@ -88,12 +90,9 @@ This also removes volumes to start fresh.
 Test publishing against the local stack (using default ports):
 
 ```bash
-# Set environment variable for client authentication
-export NOSTR_CLIENT_KEY=0000000000000000000000000000000000000000000000000000000000000002
-
 # Publish a test article
 uv run nostr-publish your-article.md \
-  --bunker "bunker://79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798?relay=ws%3A%2F%2Flocalhost%3A8080" \
+  --bunker "bunker://79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798?relay=ws%3A%2F%2Flocalhost%3A8080&secret=testauth" \
   --relay ws://localhost:8080
 
 # Dry run (validate without publishing)
@@ -121,15 +120,19 @@ Configure Emacs to use your local checkout:
 
 ;; Configure for local test stack (adjust ports if using custom .env)
 (setq nostr-publish-bunker-uri
-      "bunker://79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798?relay=ws%3A%2F%2Flocalhost%3A8080")
+      "bunker://79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798?relay=ws%3A%2F%2Flocalhost%3A8080&secret=testauth")
 (setq nostr-publish-default-relays '("ws://localhost:8080"))
 (setq nostr-publish-timeout 60)
 
 ;; Optional: Blossom server for cover image uploads (required if using cover.file)
 (setq nostr-publish-blossom-url "http://localhost:3000")
 
-;; Required: set client key for bunker authentication
-(setenv "NOSTR_CLIENT_KEY" "0000000000000000000000000000000000000000000000000000000000000002")
+;; Optional: Preview mode configuration (for C-c C-b)
+(setq nostr-publish-preview-relay "ws://localhost:8080")
+(setq nostr-publish-preview-bunker
+      "bunker://79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798?relay=ws%3A%2F%2Flocalhost%3A8080&secret=testauth")
+(setq nostr-publish-preview-blossom "http://localhost:3000")
+(setq nostr-publish-preview-reader "http://localhost:2999")
 ```
 
 Or with `use-package`:
@@ -138,14 +141,18 @@ Or with `use-package`:
 (use-package nostr-publish
   :load-path "/path/to/emacs-nostr-publish"
   :hook (markdown-mode . nostr-publish-mode)
-  :init
-  (setenv "NOSTR_CLIENT_KEY" "0000000000000000000000000000000000000000000000000000000000000002")
   :custom
   (nostr-publish-bunker-uri
-   "bunker://79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798?relay=ws%3A%2F%2Flocalhost%3A8080")
+   "bunker://79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798?relay=ws%3A%2F%2Flocalhost%3A8080&secret=testauth")
   (nostr-publish-default-relays '("ws://localhost:8080"))
   (nostr-publish-timeout 60)
-  (nostr-publish-blossom-url "http://localhost:3000"))
+  (nostr-publish-blossom-url "http://localhost:3000")
+  ;; Preview mode (C-c C-b)
+  (nostr-publish-preview-relay "ws://localhost:8080")
+  (nostr-publish-preview-bunker
+   "bunker://79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798?relay=ws%3A%2F%2Flocalhost%3A8080&secret=testauth")
+  (nostr-publish-preview-blossom "http://localhost:3000")
+  (nostr-publish-preview-reader "http://localhost:2999"))
 ```
 
 ### Interactive Testing
@@ -153,7 +160,7 @@ Or with `use-package`:
 1. Start the local test stack (see above)
 2. Load your Emacs configuration
 3. Open a Markdown file with valid frontmatter
-4. Press `C-c C-p` to publish
+4. Press `C-c C-b` (or `M-x nostr-publish-preview-buffer`) to preview (opens in njump) or `C-c C-p` (or `M-x nostr-publish-buffer`) to publish
 
 Example test article:
 

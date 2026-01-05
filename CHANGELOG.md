@@ -8,6 +8,31 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- **Preview Mode (Emacs)**: Review articles before publishing using preview infrastructure
+  - New Emacs command `nostr-publish-preview-buffer` (or `M-x nostr-publish-preview-buffer`)
+  - Uses same publishing pipeline as production (validation, signing, image upload)
+  - Targets preview relay, bunker, and Blossom server instead of production
+  - Adds client annotation tag `x-emacs-nostr-publish: preview` to published events
+  - Suppresses frontmatter write-back (source file remains unmodified)
+  - Opens preview reader (njump) in browser with naddr (configurable)
+  - New configuration variables: `nostr-publish-preview-relay`, `nostr-publish-preview-bunker`, `nostr-publish-preview-blossom`, `nostr-publish-preview-reader`, `nostr-publish-preview-open-browser`
+
+- **NIP-23 image tag for cover images**: Dual-tag emission for client compatibility
+  - Emits `["image", url]` tag alongside NIP-92 `imeta` tag when cover image is present
+  - Ensures compatibility with clients like njump that expect NIP-23 format
+  - Image tag positioned before imeta tag per spec section 7.2
+
+- **Arbitrary tag injection (CLI)**: Add custom tags to events via `--tag KEY VALUE`
+  - Repeatable flag for multiple tags
+  - Tags positioned after structural metadata, before content tags
+  - Enables client-specific annotations without modifying core event construction
+  - Used by preview mode to add `x-emacs-nostr-publish: preview` tag
+
+- **Idempotent Blossom uploads**: Check blob existence before uploading
+  - Uses `nak blossom check` to verify if blob already exists on server
+  - Skips upload when blob with matching hash is already present
+  - Reduces redundant uploads during republishing workflow
+
 - **NIP-19 address encoding (naddr)**: Generate shareable article addresses
   - CLI output includes `naddr` field in JSON response after successful publish
   - Emacs displays naddr in success message
@@ -51,6 +76,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - **Test infrastructure improvements**
   - Blossom server in docker-compose for E2E testing
+  - njump preview reader service in docker-compose for local preview testing
   - `.env` configuration for local test stack ports
   - Emacs test targets in Makefile (`test-emacs`, `test-emacs-compile`, `test-emacs-unit`)
 

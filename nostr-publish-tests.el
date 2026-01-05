@@ -1075,5 +1075,593 @@ Returns the buffer."
           (should (re-search-forward "^naddr: naddr1noslug$" nil t)))
       (nostr-publish--cleanup-buffer buf))))
 
+;;; Tests for Preview Mode (nostr-publish-preview-buffer)
+
+(ert-deftest nostr-publish-preview-requires-preview-relay ()
+  "Preview buffer should fail without preview relay configured."
+  (let ((buf (nostr-publish--make-test-buffer
+              "*test-preview-relay*"
+              "# Test\nContent"))
+        (nostr-publish-preview-relay nil)
+        (nostr-publish-preview-bunker "bunker://test")
+        (nostr-publish-preview-reader "https://preview.example.com"))
+    (unwind-protect
+        (with-current-buffer buf
+          (should-error (nostr-publish-preview-buffer)
+                        :type 'error))
+      (nostr-publish--cleanup-buffer buf))))
+
+(ert-deftest nostr-publish-preview-requires-preview-bunker ()
+  "Preview buffer should fail without preview bunker configured."
+  (let ((buf (nostr-publish--make-test-buffer
+              "*test-preview-bunker*"
+              "# Test\nContent"))
+        (nostr-publish-preview-relay "wss://preview.relay.com")
+        (nostr-publish-preview-bunker nil)
+        (nostr-publish-preview-reader "https://preview.example.com"))
+    (unwind-protect
+        (with-current-buffer buf
+          (should-error (nostr-publish-preview-buffer)
+                        :type 'error))
+      (nostr-publish--cleanup-buffer buf))))
+
+(ert-deftest nostr-publish-preview-requires-preview-reader ()
+  "Preview buffer should fail without preview reader configured."
+  (let ((buf (nostr-publish--make-test-buffer
+              "*test-preview-reader*"
+              "# Test\nContent"))
+        (nostr-publish-preview-relay "wss://preview.relay.com")
+        (nostr-publish-preview-bunker "bunker://test")
+        (nostr-publish-preview-reader nil))
+    (unwind-protect
+        (with-current-buffer buf
+          (should-error (nostr-publish-preview-buffer)
+                        :type 'error))
+      (nostr-publish--cleanup-buffer buf))))
+
+(ert-deftest nostr-publish-preview-requires-file-association ()
+  "Preview should fail for buffers without associated file."
+  (let ((buf (get-buffer-create "*test-preview-no-file*"))
+        (nostr-publish-preview-relay "wss://preview.relay.com")
+        (nostr-publish-preview-bunker "bunker://test")
+        (nostr-publish-preview-reader "https://preview.example.com"))
+    (unwind-protect
+        (with-current-buffer buf
+          (insert "# Test\nContent")
+          (should-error (nostr-publish-preview-buffer)
+                        :type 'error))
+      (kill-buffer buf))))
+
+(ert-deftest nostr-publish-preview-validates-relay-url ()
+  "Preview should reject invalid relay URLs."
+  (let ((buf (nostr-publish--make-test-buffer
+              "*test-preview-invalid-relay*"
+              "# Test\nContent"))
+        (nostr-publish-preview-relay "http://invalid.relay.com")
+        (nostr-publish-preview-bunker "bunker://test")
+        (nostr-publish-preview-reader "https://preview.example.com"))
+    (unwind-protect
+        (with-current-buffer buf
+          (should-error (nostr-publish-preview-buffer)
+                        :type 'error))
+      (nostr-publish--cleanup-buffer buf))))
+
+(ert-deftest nostr-publish-preview-validates-reader-url ()
+  "Preview should reject invalid reader URLs (must be http:// or https://)."
+  (let ((buf (nostr-publish--make-test-buffer
+              "*test-preview-invalid-reader*"
+              "# Test\nContent"))
+        (nostr-publish-preview-relay "wss://preview.relay.com")
+        (nostr-publish-preview-bunker "bunker://test")
+        (nostr-publish-preview-reader "ftp://invalid.reader.com"))
+    (unwind-protect
+        (with-current-buffer buf
+          (should-error (nostr-publish-preview-buffer)
+                        :type 'error))
+      (nostr-publish--cleanup-buffer buf))))
+
+(ert-deftest nostr-publish-preview-accepts-https-reader ()
+  "Preview should accept https:// reader URLs."
+  (let ((buf (nostr-publish--make-test-buffer
+              "*test-preview-https-reader*"
+              "# Test\nContent"))
+        (nostr-publish-preview-relay "wss://preview.relay.com")
+        (nostr-publish-preview-bunker "bunker://test")
+        (nostr-publish-preview-reader "https://preview.example.com")
+        (captured-args nil))
+    (unwind-protect
+        (with-current-buffer buf
+          (cl-letf (((symbol-function 'nostr-publish--invoke-cli-preview)
+                     (lambda (args) (setq captured-args args))))
+            (nostr-publish-preview-buffer)
+            (should captured-args)))
+      (nostr-publish--cleanup-buffer buf))))
+
+(ert-deftest nostr-publish-preview-accepts-http-reader ()
+  "Preview should accept http:// reader URLs (for local development)."
+  (let ((buf (nostr-publish--make-test-buffer
+              "*test-preview-http-reader*"
+              "# Test\nContent"))
+        (nostr-publish-preview-relay "wss://preview.relay.com")
+        (nostr-publish-preview-bunker "bunker://test")
+        (nostr-publish-preview-reader "http://localhost:3000")
+        (captured-args nil))
+    (unwind-protect
+        (with-current-buffer buf
+          (cl-letf (((symbol-function 'nostr-publish--invoke-cli-preview)
+                     (lambda (args) (setq captured-args args))))
+            (nostr-publish-preview-buffer)
+            (should captured-args)))
+      (nostr-publish--cleanup-buffer buf))))
+
+(ert-deftest nostr-publish-preview-accepts-wss-relay ()
+  "Preview should accept wss:// relay URLs."
+  (let ((buf (nostr-publish--make-test-buffer
+              "*test-preview-wss*"
+              "# Test\nContent"))
+        (nostr-publish-preview-relay "wss://preview.relay.com")
+        (nostr-publish-preview-bunker "bunker://test")
+        (nostr-publish-preview-reader "https://preview.example.com")
+        (captured-args nil))
+    (unwind-protect
+        (with-current-buffer buf
+          (cl-letf (((symbol-function 'nostr-publish--invoke-cli-preview)
+                     (lambda (args) (setq captured-args args))))
+            (nostr-publish-preview-buffer)
+            (should captured-args)
+            (should (member "--relay" captured-args))
+            (should (member "wss://preview.relay.com" captured-args))))
+      (nostr-publish--cleanup-buffer buf))))
+
+(ert-deftest nostr-publish-preview-accepts-ws-relay ()
+  "Preview should accept ws:// relay URLs."
+  (let ((buf (nostr-publish--make-test-buffer
+              "*test-preview-ws*"
+              "# Test\nContent"))
+        (nostr-publish-preview-relay "ws://preview.relay.com")
+        (nostr-publish-preview-bunker "bunker://test")
+        (nostr-publish-preview-reader "https://preview.example.com")
+        (captured-args nil))
+    (unwind-protect
+        (with-current-buffer buf
+          (cl-letf (((symbol-function 'nostr-publish--invoke-cli-preview)
+                     (lambda (args) (setq captured-args args))))
+            (nostr-publish-preview-buffer)
+            (should captured-args)
+            (should (member "ws://preview.relay.com" captured-args))))
+      (nostr-publish--cleanup-buffer buf))))
+
+(ert-deftest nostr-publish-preview-uses-preview-bunker ()
+  "Preview CLI should receive preview bunker URI."
+  (let ((buf (nostr-publish--make-test-buffer
+              "*test-preview-bunker-arg*"
+              "# Test\nContent"))
+        (nostr-publish-preview-relay "wss://preview.relay.com")
+        (nostr-publish-preview-bunker "bunker://preview-pubkey@preview.signer.com")
+        (nostr-publish-preview-reader "https://preview.example.com")
+        (captured-args nil))
+    (unwind-protect
+        (with-current-buffer buf
+          (cl-letf (((symbol-function 'nostr-publish--invoke-cli-preview)
+                     (lambda (args) (setq captured-args args))))
+            (nostr-publish-preview-buffer)
+            (should (member "--bunker" captured-args))
+            (let ((bunker-idx (seq-position captured-args "--bunker")))
+              (should (string= (nth (1+ bunker-idx) captured-args)
+                               "bunker://preview-pubkey@preview.signer.com")))))
+      (nostr-publish--cleanup-buffer buf))))
+
+(ert-deftest nostr-publish-preview-uses-single-relay ()
+  "Preview CLI should receive exactly one relay (the preview relay)."
+  (let ((buf (nostr-publish--make-test-buffer
+              "*test-preview-single-relay*"
+              "# Test\nContent"))
+        (nostr-publish-preview-relay "wss://preview.relay.com")
+        (nostr-publish-preview-bunker "bunker://test")
+        (nostr-publish-preview-reader "https://preview.example.com")
+        (nostr-publish-default-relays '("wss://relay1.com" "wss://relay2.com"))
+        (captured-args nil))
+    (unwind-protect
+        (with-current-buffer buf
+          (cl-letf (((symbol-function 'nostr-publish--invoke-cli-preview)
+                     (lambda (args) (setq captured-args args))))
+            (nostr-publish-preview-buffer)
+            ;; Count --relay occurrences
+            (let ((relay-count (cl-count "--relay" captured-args :test #'string=)))
+              (should (= relay-count 1)))
+            ;; Verify it's the preview relay
+            (should (member "wss://preview.relay.com" captured-args))
+            ;; Verify default relays are NOT included
+            (should-not (member "wss://relay1.com" captured-args))
+            (should-not (member "wss://relay2.com" captured-args))))
+      (nostr-publish--cleanup-buffer buf))))
+
+(ert-deftest nostr-publish-preview-uses-preview-blossom ()
+  "Preview CLI should receive preview Blossom URL when configured."
+  (let ((buf (nostr-publish--make-test-buffer
+              "*test-preview-blossom*"
+              "# Test\nContent"))
+        (nostr-publish-preview-relay "wss://preview.relay.com")
+        (nostr-publish-preview-bunker "bunker://test")
+        (nostr-publish-preview-reader "https://preview.example.com")
+        (nostr-publish-preview-blossom "https://preview.blossom.com")
+        (captured-args nil))
+    (unwind-protect
+        (with-current-buffer buf
+          (cl-letf (((symbol-function 'nostr-publish--invoke-cli-preview)
+                     (lambda (args) (setq captured-args args))))
+            (nostr-publish-preview-buffer)
+            (should (member "--blossom" captured-args))
+            (should (member "https://preview.blossom.com" captured-args))))
+      (nostr-publish--cleanup-buffer buf))))
+
+(ert-deftest nostr-publish-preview-omits-blossom-when-not-configured ()
+  "Preview CLI should not include --blossom when not configured."
+  (let ((buf (nostr-publish--make-test-buffer
+              "*test-preview-no-blossom*"
+              "# Test\nContent"))
+        (nostr-publish-preview-relay "wss://preview.relay.com")
+        (nostr-publish-preview-bunker "bunker://test")
+        (nostr-publish-preview-reader "https://preview.example.com")
+        (nostr-publish-preview-blossom nil)
+        (captured-args nil))
+    (unwind-protect
+        (with-current-buffer buf
+          (cl-letf (((symbol-function 'nostr-publish--invoke-cli-preview)
+                     (lambda (args) (setq captured-args args))))
+            (nostr-publish-preview-buffer)
+            (should-not (member "--blossom" captured-args))))
+      (nostr-publish--cleanup-buffer buf))))
+
+(ert-deftest nostr-publish-preview-injects-preview-tag ()
+  "Preview CLI should include --tag x-emacs-nostr-publish preview."
+  (let ((buf (nostr-publish--make-test-buffer
+              "*test-preview-tag*"
+              "# Test\nContent"))
+        (nostr-publish-preview-relay "wss://preview.relay.com")
+        (nostr-publish-preview-bunker "bunker://test")
+        (nostr-publish-preview-reader "https://preview.example.com")
+        (captured-args nil))
+    (unwind-protect
+        (with-current-buffer buf
+          (cl-letf (((symbol-function 'nostr-publish--invoke-cli-preview)
+                     (lambda (args) (setq captured-args args))))
+            (nostr-publish-preview-buffer)
+            (should (member "--tag" captured-args))
+            (let ((tag-idx (seq-position captured-args "--tag")))
+              (should (string= (nth (1+ tag-idx) captured-args) "x-emacs-nostr-publish"))
+              (should (string= (nth (+ tag-idx 2) captured-args) "preview")))))
+      (nostr-publish--cleanup-buffer buf))))
+
+(ert-deftest nostr-publish-preview-uses-timeout ()
+  "Preview CLI should receive configured timeout."
+  (let ((buf (nostr-publish--make-test-buffer
+              "*test-preview-timeout*"
+              "# Test\nContent"))
+        (nostr-publish-preview-relay "wss://preview.relay.com")
+        (nostr-publish-preview-bunker "bunker://test")
+        (nostr-publish-preview-reader "https://preview.example.com")
+        (nostr-publish-timeout 45)
+        (captured-args nil))
+    (unwind-protect
+        (with-current-buffer buf
+          (cl-letf (((symbol-function 'nostr-publish--invoke-cli-preview)
+                     (lambda (args) (setq captured-args args))))
+            (nostr-publish-preview-buffer)
+            (should (member "--timeout" captured-args))
+            (let ((timeout-idx (seq-position captured-args "--timeout")))
+              (should (string= (nth (1+ timeout-idx) captured-args) "45")))))
+      (nostr-publish--cleanup-buffer buf))))
+
+(ert-deftest nostr-publish-preview-passes-filename ()
+  "Preview CLI should receive buffer's filename."
+  (let ((buf (nostr-publish--make-test-buffer
+              "*test-preview-filename*"
+              "# Test\nContent"))
+        (nostr-publish-preview-relay "wss://preview.relay.com")
+        (nostr-publish-preview-bunker "bunker://test")
+        (nostr-publish-preview-reader "https://preview.example.com")
+        (captured-args nil))
+    (unwind-protect
+        (with-current-buffer buf
+          (cl-letf (((symbol-function 'nostr-publish--invoke-cli-preview)
+                     (lambda (args) (setq captured-args args))))
+            (nostr-publish-preview-buffer)
+            ;; Filename should be second argument (after command name)
+            (should (string= (nth 1 captured-args) (buffer-file-name)))))
+      (nostr-publish--cleanup-buffer buf))))
+
+(ert-deftest nostr-publish-preview-auto-saves-modified ()
+  "Preview should auto-save buffer if modified."
+  (let ((buf (nostr-publish--make-test-buffer
+              "*test-preview-autosave*"
+              "# Test\nContent"
+              t))  ; Create as modified
+        (nostr-publish-preview-relay "wss://preview.relay.com")
+        (nostr-publish-preview-bunker "bunker://test")
+        (nostr-publish-preview-reader "https://preview.example.com")
+        (nostr-publish--cli-called nil))
+    (unwind-protect
+        (with-current-buffer buf
+          (should (buffer-modified-p))
+          (cl-letf (((symbol-function 'nostr-publish--invoke-cli-preview)
+                     (lambda (_args)
+                       (setq nostr-publish--cli-called t))))
+            (nostr-publish-preview-buffer)
+            (should-not (buffer-modified-p))
+            (should nostr-publish--cli-called)))
+      (nostr-publish--cleanup-buffer buf))))
+
+;;; Tests for nostr-publish--invoke-cli-preview (no frontmatter writeback)
+
+(ert-deftest nostr-publish-preview-cli-no-cover-metadata-update ()
+  "Preview CLI handler should NOT update cover metadata in buffer."
+  (let ((buf (nostr-publish--make-test-buffer
+              "*test-preview-no-cover-update*"
+              "---\ntitle: Test\nimage:\n  file: img.jpg\n---\nContent"))
+        (cli-output "{\"event_id\":\"abc123\",\"pubkey\":\"pub123\",\"naddr\":\"naddr1test\",\"image\":{\"hash\":\"hash999\",\"url\":\"https://preview.blossom/img.jpg\"}}"))
+    (unwind-protect
+        (with-current-buffer buf
+          (let ((original-content (buffer-string)))
+            (cl-letf (((symbol-function 'call-process)
+                       (lambda (_program _infile destination _display &rest _args)
+                         (when (and (listp destination)
+                                    (listp (car destination))
+                                    (eq (caar destination) :file))
+                           (with-temp-file (cadar destination)
+                             (insert cli-output)))
+                         0))
+                      ((symbol-function 'browse-url)
+                       (lambda (_url) nil)))
+              (nostr-publish--invoke-cli-preview
+               (list "nostr-publish" (buffer-file-name) "--relay" "wss://test"))
+              ;; Buffer content should NOT contain the hash/url from CLI output
+              (should (string= (buffer-string) original-content))
+              (should-not (string-match "hash999" (buffer-string))))))
+      (nostr-publish--cleanup-buffer buf))))
+
+(ert-deftest nostr-publish-preview-cli-no-naddr-update ()
+  "Preview CLI handler should NOT update naddr in buffer."
+  (let ((buf (nostr-publish--make-test-buffer
+              "*test-preview-no-naddr-update*"
+              "---\ntitle: Test\nslug: test-slug\n---\nContent"))
+        (cli-output "{\"event_id\":\"abc123\",\"pubkey\":\"pub123\",\"naddr\":\"naddr1shouldnotappear\"}"))
+    (unwind-protect
+        (with-current-buffer buf
+          (let ((original-content (buffer-string)))
+            (cl-letf (((symbol-function 'call-process)
+                       (lambda (_program _infile destination _display &rest _args)
+                         (when (and (listp destination)
+                                    (listp (car destination))
+                                    (eq (caar destination) :file))
+                           (with-temp-file (cadar destination)
+                             (insert cli-output)))
+                         0))
+                      ((symbol-function 'browse-url)
+                       (lambda (_url) nil)))
+              (nostr-publish--invoke-cli-preview
+               (list "nostr-publish" (buffer-file-name) "--relay" "wss://test"))
+              ;; Buffer content should NOT contain naddr
+              (should (string= (buffer-string) original-content))
+              (should-not (string-match "naddr1shouldnotappear" (buffer-string))))))
+      (nostr-publish--cleanup-buffer buf))))
+
+(ert-deftest nostr-publish-preview-cli-opens-browser ()
+  "Preview CLI handler should open browser with naddr URL."
+  (let ((buf (nostr-publish--make-test-buffer
+              "*test-preview-browser*"
+              "---\ntitle: Test\nslug: test\n---\nContent"))
+        (cli-output "{\"event_id\":\"abc123\",\"pubkey\":\"pub123\",\"naddr\":\"naddr1testbrowser\"}")
+        (nostr-publish-preview-reader "https://preview.example.com")
+        (nostr-publish-preview-open-browser t)
+        (captured-url nil))
+    (unwind-protect
+        (with-current-buffer buf
+          (cl-letf (((symbol-function 'call-process)
+                     (lambda (_program _infile destination _display &rest _args)
+                       (when (and (listp destination)
+                                  (listp (car destination))
+                                  (eq (caar destination) :file))
+                         (with-temp-file (cadar destination)
+                           (insert cli-output)))
+                       0))
+                    ((symbol-function 'browse-url)
+                     (lambda (url) (setq captured-url url))))
+            (nostr-publish--invoke-cli-preview
+             (list "nostr-publish" (buffer-file-name) "--relay" "wss://test"))
+            ;; Verify browser opened with correct URL
+            (should (string= captured-url "https://preview.example.com/naddr1testbrowser"))))
+      (nostr-publish--cleanup-buffer buf))))
+
+(ert-deftest nostr-publish-preview-cli-no-browser-when-disabled ()
+  "Preview CLI handler should NOT open browser when disabled."
+  (let ((buf (nostr-publish--make-test-buffer
+              "*test-preview-no-browser*"
+              "---\ntitle: Test\nslug: test\n---\nContent"))
+        (cli-output "{\"event_id\":\"abc123\",\"pubkey\":\"pub123\",\"naddr\":\"naddr1test\"}")
+        (nostr-publish-preview-reader "https://preview.example.com")
+        (nostr-publish-preview-open-browser nil)
+        (browser-called nil))
+    (unwind-protect
+        (with-current-buffer buf
+          (cl-letf (((symbol-function 'call-process)
+                     (lambda (_program _infile destination _display &rest _args)
+                       (when (and (listp destination)
+                                  (listp (car destination))
+                                  (eq (caar destination) :file))
+                         (with-temp-file (cadar destination)
+                           (insert cli-output)))
+                       0))
+                    ((symbol-function 'browse-url)
+                     (lambda (_url) (setq browser-called t))))
+            (nostr-publish--invoke-cli-preview
+             (list "nostr-publish" (buffer-file-name) "--relay" "wss://test"))
+            (should-not browser-called)))
+      (nostr-publish--cleanup-buffer buf))))
+
+(ert-deftest nostr-publish-preview-cli-success-message ()
+  "Preview CLI handler should display preview success message."
+  (let ((buf (nostr-publish--make-test-buffer
+              "*test-preview-message*"
+              "---\ntitle: Test\nslug: test\n---\nContent"))
+        (cli-output "{\"event_id\":\"abc123\",\"pubkey\":\"pub123\",\"naddr\":\"naddr1msgtest\"}")
+        (nostr-publish-preview-reader "https://preview.example.com")
+        (nostr-publish-preview-open-browser nil)
+        (captured-message nil))
+    (unwind-protect
+        (with-current-buffer buf
+          (cl-letf (((symbol-function 'call-process)
+                     (lambda (_program _infile destination _display &rest _args)
+                       (when (and (listp destination)
+                                  (listp (car destination))
+                                  (eq (caar destination) :file))
+                         (with-temp-file (cadar destination)
+                           (insert cli-output)))
+                       0))
+                    ((symbol-function 'message)
+                     (lambda (fmt &rest args)
+                       (setq captured-message (apply #'format fmt args)))))
+            (nostr-publish--invoke-cli-preview
+             (list "nostr-publish" (buffer-file-name) "--relay" "wss://test"))
+            (should (string-match "Preview published:" captured-message))
+            (should (string-match "abc123" captured-message))
+            (should (string-match "naddr1msgtest" captured-message))))
+      (nostr-publish--cleanup-buffer buf))))
+
+(ert-deftest nostr-publish-preview-cli-failure-message ()
+  "Preview CLI handler should display failure message on error."
+  (let ((buf (nostr-publish--make-test-buffer
+              "*test-preview-fail-msg*"
+              "---\ntitle: Test\nslug: test\n---\nContent"))
+        (nostr-publish-preview-reader "https://preview.example.com")
+        (captured-message nil))
+    (unwind-protect
+        (with-current-buffer buf
+          (cl-letf (((symbol-function 'call-process)
+                     (lambda (_program _infile destination _display &rest _args)
+                       (when (and (listp destination)
+                                  (listp (car destination)))
+                         (let ((stderr-file (cadr destination)))
+                           (with-temp-file stderr-file
+                             (insert "Validation failed: missing required field"))))
+                       1))  ; Non-zero exit code
+                    ((symbol-function 'message)
+                     (lambda (fmt &rest args)
+                       (setq captured-message (apply #'format fmt args)))))
+            (nostr-publish--invoke-cli-preview
+             (list "nostr-publish" (buffer-file-name) "--relay" "wss://test"))
+            (should (string-match "failed" captured-message))))
+      (nostr-publish--cleanup-buffer buf))))
+
+(ert-deftest nostr-publish-preview-cli-full-argument-construction ()
+  "Verify complete CLI argument construction for preview."
+  (let ((buf (nostr-publish--make-test-buffer
+              "*test-preview-full-args*"
+              "# Test"))
+        (nostr-publish-preview-relay "wss://preview.relay.com")
+        (nostr-publish-preview-bunker "bunker://preview-pubkey")
+        (nostr-publish-preview-reader "https://preview.reader.com")
+        (nostr-publish-preview-blossom "https://preview.blossom.com")
+        (nostr-publish-timeout 60)
+        (captured-args nil))
+    (unwind-protect
+        (with-current-buffer buf
+          (cl-letf (((symbol-function 'nostr-publish--invoke-cli-preview)
+                     (lambda (args) (setq captured-args args))))
+            (nostr-publish-preview-buffer)
+            ;; Verify all components present
+            (should (string= (car captured-args) "nostr-publish"))
+            (should (member "--bunker" captured-args))
+            (should (member "bunker://preview-pubkey" captured-args))
+            (should (member "--relay" captured-args))
+            (should (member "wss://preview.relay.com" captured-args))
+            (should (member "--timeout" captured-args))
+            (should (member "60" captured-args))
+            (should (member "--blossom" captured-args))
+            (should (member "https://preview.blossom.com" captured-args))
+            (should (member "--tag" captured-args))
+            (should (member "x-emacs-nostr-publish" captured-args))
+            (should (member "preview" captured-args))))
+      (nostr-publish--cleanup-buffer buf))))
+
+;;; Tests for preview isolation from production
+
+(ert-deftest nostr-publish-preview-does-not-use-production-relays ()
+  "Preview should never use nostr-publish-default-relays."
+  (let ((buf (nostr-publish--make-test-buffer
+              "*test-preview-isolation-relays*"
+              "# Test"))
+        (nostr-publish-preview-relay "wss://preview.relay.com")
+        (nostr-publish-preview-bunker "bunker://preview")
+        (nostr-publish-preview-reader "https://preview.reader.com")
+        (nostr-publish-default-relays '("wss://prod1.relay.com" "wss://prod2.relay.com"))
+        (captured-args nil))
+    (unwind-protect
+        (with-current-buffer buf
+          (cl-letf (((symbol-function 'nostr-publish--invoke-cli-preview)
+                     (lambda (args) (setq captured-args args))))
+            (nostr-publish-preview-buffer)
+            ;; Production relays should NOT appear
+            (should-not (member "wss://prod1.relay.com" captured-args))
+            (should-not (member "wss://prod2.relay.com" captured-args))
+            ;; Preview relay should appear
+            (should (member "wss://preview.relay.com" captured-args))))
+      (nostr-publish--cleanup-buffer buf))))
+
+(ert-deftest nostr-publish-preview-does-not-use-production-bunker ()
+  "Preview should never use nostr-publish-bunker-uri."
+  (let ((buf (nostr-publish--make-test-buffer
+              "*test-preview-isolation-bunker*"
+              "# Test"))
+        (nostr-publish-preview-relay "wss://preview.relay.com")
+        (nostr-publish-preview-bunker "bunker://preview-pubkey")
+        (nostr-publish-preview-reader "https://preview.reader.com")
+        (nostr-publish-bunker-uri "bunker://production-pubkey")
+        (captured-args nil))
+    (unwind-protect
+        (with-current-buffer buf
+          (cl-letf (((symbol-function 'nostr-publish--invoke-cli-preview)
+                     (lambda (args) (setq captured-args args))))
+            (nostr-publish-preview-buffer)
+            ;; Production bunker should NOT appear
+            (should-not (member "bunker://production-pubkey" captured-args))
+            ;; Preview bunker should appear
+            (should (member "bunker://preview-pubkey" captured-args))))
+      (nostr-publish--cleanup-buffer buf))))
+
+(ert-deftest nostr-publish-preview-does-not-use-production-blossom ()
+  "Preview should use preview Blossom, not production."
+  (let ((buf (nostr-publish--make-test-buffer
+              "*test-preview-isolation-blossom*"
+              "# Test"))
+        (nostr-publish-preview-relay "wss://preview.relay.com")
+        (nostr-publish-preview-bunker "bunker://preview")
+        (nostr-publish-preview-reader "https://preview.reader.com")
+        (nostr-publish-preview-blossom "https://preview.blossom.com")
+        (nostr-publish-blossom-url "https://production.blossom.com")
+        (captured-args nil))
+    (unwind-protect
+        (with-current-buffer buf
+          (cl-letf (((symbol-function 'nostr-publish--invoke-cli-preview)
+                     (lambda (args) (setq captured-args args))))
+            (nostr-publish-preview-buffer)
+            ;; Production blossom should NOT appear
+            (should-not (member "https://production.blossom.com" captured-args))
+            ;; Preview blossom should appear
+            (should (member "https://preview.blossom.com" captured-args))))
+      (nostr-publish--cleanup-buffer buf))))
+
+;;; Tests for Minor Mode Keybindings
+
+(ert-deftest nostr-publish-test-keymap-publish-binding ()
+  "Test that C-c C-p is bound to nostr-publish-buffer in minor mode."
+  (let ((binding (lookup-key nostr-publish-mode-map (kbd "C-c C-p"))))
+    (should (eq binding 'nostr-publish-buffer))))
+
+(ert-deftest nostr-publish-test-keymap-preview-binding ()
+  "Test that C-c C-b is bound to nostr-publish-preview-buffer in minor mode."
+  (let ((binding (lookup-key nostr-publish-mode-map (kbd "C-c C-b"))))
+    (should (eq binding 'nostr-publish-preview-buffer))))
+
 (provide 'nostr-publish-tests)
 ;;; nostr-publish-tests.el ends here

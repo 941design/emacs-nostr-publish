@@ -59,6 +59,12 @@ def parse_image_field(image_value: str | dict | None) -> ImageMetadata | None:
         return ImageMetadata(url=image_value)
 
     if isinstance(image_value, dict):
+        # Validate that only allowed keys are present (strict mode per spec section 5.5)
+        allowed_keys = {"url", "file", "mime", "alt", "dim", "hash"}
+        unknown_keys = set(image_value.keys()) - allowed_keys
+        if unknown_keys:
+            raise InvalidFieldValueError(f"unknown keys in image object: {', '.join(sorted(unknown_keys))}")
+
         url = image_value.get("url")
         file = image_value.get("file")
         mime = image_value.get("mime")
