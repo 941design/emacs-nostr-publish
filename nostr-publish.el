@@ -5,7 +5,7 @@
 ;; Author: Markus Rother <mail@markusrother.de>
 ;; Version: 0.2.0
 ;; Package-Requires: ((emacs "27.1"))
-;; Keywords: nostr, publishing, markdown
+;; Keywords: comm, text
 ;; URL: https://github.com/941design/emacs-nostr-publish
 
 ;; This file is NOT part of GNU Emacs.
