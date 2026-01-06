@@ -1,4 +1,4 @@
-;;; nostr-publish.el --- Publish Markdown to Nostr via NIP-23 -*- lexical-binding: t; -*-
+;;; nostr-publish.el --- Publish Markdown to Nostr -*- lexical-binding: t; -*-
 
 ;; Copyright (C) 2026 Markus Rother
 
@@ -52,7 +52,7 @@ If nil, must be provided at publish time or via CLI config."
 
 (defcustom nostr-publish-default-relays nil
   "Relay URLs for publishing (required).
-List of wss:// or ws:// URLs. These serve as both the allowlist
+List of wss:// or ws:// URLs.  These serve as both the allowlist
 and default relays per spec section 7. Frontmatter relays must
 be a subset of this list."
   :type '(repeat string)
@@ -117,7 +117,7 @@ Example: https://preview.example.com"
 
 ;;;###autoload
 (defun nostr-publish-buffer ()
-  "Publish current Markdown buffer to Nostr via NIP-23.
+  "Publish current Markdown buffer to Nostr.
 
 CONTRACT:
   Inputs:
@@ -142,26 +142,26 @@ CONTRACT:
 
   Algorithm:
     1. Check buffer has associated file:
-       a. If buffer-file-name is nil, error: \"Buffer not associated with file\"
+       a. If variable `buffer-file-name' is nil, signal error
     2. Check relays are configured:
        a. If nostr-publish-default-relays is nil/empty,
           error: \"No relays configured\"
     3. Save buffer if modified:
-       a. If buffer-modified-p, call save-buffer
+       a. If `buffer-modified-p', call `save-buffer'
     4. Build CLI command arguments:
        a. Start with nostr-publish-cli-command
-       b. Add buffer-file-name
+       b. Add variable `buffer-file-name'
        c. If nostr-publish-bunker-uri set, add \"--bunker URI\"
        d. For each relay in nostr-publish-default-relays, add \"--relay URL\"
        e. Add \"--timeout SECONDS\"
     5. Invoke CLI synchronously:
-       a. Call shell-command or make-process with arguments
+       a. Call `call-process' with arguments
        b. Capture stdout and stderr
        c. Wait for process completion with timeout
     6. Handle result:
        a. If exit code 0:
           - Parse stdout for event ID and pubkey
-          - Display success message: \"Published: event ID <id>, pubkey <pubkey>\"
+          - Display success message with event ID and pubkey
        b. If exit code non-zero:
           - Parse stderr for error message
           - Display error in echo area: \"Publish failed: <error>\"
@@ -180,7 +180,7 @@ CONTRACT:
 
     ;; Step 2: Validate relays are configured (required)
     (unless nostr-publish-default-relays
-      (error "No relays configured. Set nostr-publish-default-relays"))
+      (error "No relays configured.  Set nostr-publish-default-relays"))
     (dolist (relay nostr-publish-default-relays)
       (unless (string-match-p "\\`wss?://" relay)
         (error "Invalid relay URL '%s': must use ws:// or wss://" relay)))
@@ -514,21 +514,20 @@ CONTRACT:
     6. On success:
        a. Do NOT update frontmatter
        b. Open preview reader with naddr (if configured)
-       c. Display success message
-"
+       c. Display success message"
   (interactive)
   ;; Step 1: Validate preview configuration
   (unless nostr-publish-preview-relay
-    (error "Preview relay not configured. Set nostr-publish-preview-relay"))
+    (error "Preview relay not configured.  Set nostr-publish-preview-relay"))
   (unless nostr-publish-preview-bunker
-    (error "Preview bunker not configured. Set nostr-publish-preview-bunker"))
+    (error "Preview bunker not configured.  Set nostr-publish-preview-bunker"))
   (unless nostr-publish-preview-reader
-    (error "Preview reader not configured. Set nostr-publish-preview-reader"))
+    (error "Preview reader not configured.  Set nostr-publish-preview-reader"))
 
   ;; Step 2: Validate buffer has file
   (let ((file (buffer-file-name)))
     (unless file
-      (error "Buffer has no file. Save buffer before previewing"))
+      (error "Buffer has no file.  Save buffer before previewing"))
 
     ;; Validate preview relay URL
     (unless (string-match-p "\\`wss?://" nostr-publish-preview-relay)
@@ -556,8 +555,8 @@ CONTRACT:
       (nostr-publish--invoke-cli-preview args))))
 
 (defun nostr-publish--invoke-cli-preview (args)
-  "Invoke CLI for preview with ARGS, suppress frontmatter updates.
-Opens preview reader with naddr on success."
+  "Invoke CLI for preview with ARGS without updating frontmatter.
+Open preview reader with naddr on success."
   (nostr-publish--invoke-cli-common
    args
    (lambda (result _target-buffer)

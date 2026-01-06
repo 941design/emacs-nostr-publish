@@ -7,7 +7,7 @@ NOSTR_PUBLISH_RELAY_PORT ?= 8080
 NOSTR_PUBLISH_BLOSSOM_PORT ?= 3000
 
 .PHONY: help sync sync-dev install build publish publish-test test test-unit test-e2e test-emacs test-emacs-compile test-emacs-unit \
-        lint format format-md clean clean-emacs install-hooks version-patch version-minor version-major stack-up stack-down
+        test-emacs-lint test-emacs-checkdoc lint format format-md clean clean-emacs install-hooks version-patch version-minor version-major stack-up stack-down
 
 help: ## Show this help message
 	@grep -hE '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-15s\033[0m %s\n", $$1, $$2}'
@@ -52,6 +52,18 @@ test-emacs-unit: ## Run Emacs ERT unit tests
 		-l nostr-publish-tests.el \
 		-f ert-run-tests-batch-and-exit
 
+test-emacs-lint: ## Run package-lint on Emacs Lisp files
+	emacs -Q --batch \
+		-l package \
+		--eval "(progn (add-to-list 'package-archives '(\"melpa\" . \"https://melpa.org/packages/\") t) (package-initialize) (package-refresh-contents) (unless (package-installed-p 'package-lint) (package-install 'package-lint)))" \
+		--eval "(require 'package-lint)" \
+		-f package-lint-batch-and-exit \
+		nostr-publish.el
+
+test-emacs-checkdoc: ## Run checkdoc on Emacs Lisp files
+	emacs -Q --batch \
+		--eval "(progn (setq checkdoc-spellcheck-documentation-flag nil) (checkdoc-file \"nostr-publish.el\"))"
+
 stack-up: ## Start local test stack (relay + signer + blossom + njump)
 	@NOSTR_PUBLISH_BLOSSOM_PORT=$(NOSTR_PUBLISH_BLOSSOM_PORT) envsubst < tests/integration/blossom-config.yml.template > tests/integration/blossom-config.yml
 	docker compose -f tests/integration/docker-compose.yml up -d
@@ -59,7 +71,7 @@ stack-up: ## Start local test stack (relay + signer + blossom + njump)
 stack-down: ## Stop local test stack and remove volumes
 	docker compose -f tests/integration/docker-compose.yml down -v
 
-lint: ## Run linter and formatter check
+lint: test-emacs-lint test-emacs-checkdoc ## Run linter and formatter check
 	uv run ruff check src/ tests/
 	uv run ruff format --check src/ tests/
 
