@@ -104,16 +104,13 @@ Example: https://preview.example.com"
   :type 'boolean
   :group 'nostr-publish)
 
-(defun nostr-publish--check-cli ()
-  "Check if nostr-publish CLI is available, warn if not."
+(defun nostr-publish--resolve-cli-command ()
+  "Return the CLI command after verifying it is installed.
+Signals `user-error' if the executable cannot be found."
   (unless (executable-find nostr-publish-cli-command)
-    (display-warning 'nostr-publish
-                     (format "CLI '%s' not found. Install with: pipx install nostr-publish"
-                             nostr-publish-cli-command)
-                     :warning)))
-
-;; Check CLI availability on load
-(nostr-publish--check-cli)
+    (user-error "CLI '%s' not found; install with: pipx install nostr-publish"
+                nostr-publish-cli-command))
+  nostr-publish-cli-command)
 
 ;;;###autoload
 (defun nostr-publish-buffer ()
@@ -142,10 +139,10 @@ CONTRACT:
 
   Algorithm:
     1. Check buffer has associated file:
-       a. If variable `buffer-file-name' is nil, signal error
+       a. If variable `buffer-file-name' is nil, signal user-error
     2. Check relays are configured:
        a. If nostr-publish-default-relays is nil/empty,
-          error: \"No relays configured\"
+          user-error: \"No relays configured\"
     3. Save buffer if modified:
        a. If `buffer-modified-p', call `save-buffer'
     4. Build CLI command arguments:
@@ -169,28 +166,28 @@ CONTRACT:
           - Display: \"Publish timed out after N seconds\"
 
   Raises:
-    - error: If buffer not associated with file
-    - error: If no relays configured
+    - user-error: If buffer not associated with file
+    - user-error: If no relays configured
     - Does not raise for publish failures (displays message instead)"
   (interactive)
   (let ((file (buffer-file-name)))
     ;; Step 1: Validate buffer has associated file
     (unless file
-      (error "Buffer not associated with file"))
+      (user-error "Buffer not associated with file"))
 
     ;; Step 2: Validate relays are configured (required)
     (unless nostr-publish-default-relays
-      (error "No relays configured.  Set nostr-publish-default-relays"))
+      (user-error "No relays configured.  Set nostr-publish-default-relays"))
     (dolist (relay nostr-publish-default-relays)
       (unless (string-match-p "\\`wss?://" relay)
-        (error "Invalid relay URL '%s': must use ws:// or wss://" relay)))
+        (user-error "Invalid relay URL '%s': must use ws:// or wss://" relay)))
 
     ;; Step 3: Save buffer if modified
     (when (buffer-modified-p)
       (save-buffer))
 
     ;; Step 4: Build CLI command arguments
-    (let ((args (list nostr-publish-cli-command file)))
+    (let ((args (list (nostr-publish--resolve-cli-command) file)))
       (when nostr-publish-bunker-uri
         (setq args (append args (list "--bunker" nostr-publish-bunker-uri))))
       (dolist (relay nostr-publish-default-relays)
@@ -302,7 +299,7 @@ Updates or inserts \"naddr:\" field in frontmatter at top-level.
 Preserves all other frontmatter fields.
 Marks buffer as modified and saves it.
 
-Signals error if frontmatter delimiters not found.
+Signals `user-error' if frontmatter delimiters not found.
 
 Atomic guarantee: Either all changes are applied and saved, or all
 changes are rolled back on error (via undo mechanism).
@@ -341,12 +338,12 @@ CONTRACT:
 
             ;; Step 1: Locate frontmatter region
             (unless (re-search-forward "^---$" nil t)
-              (error "YAML frontmatter start delimiter not found"))
+              (user-error "YAML frontmatter start delimiter not found"))
             ;; Move to the beginning of the next line (after the newline)
             (forward-line 1)
             (let ((fm-start (point)))
               (unless (re-search-forward "^---$" nil t)
-                (error "YAML frontmatter end delimiter not found"))
+                (user-error "YAML frontmatter end delimiter not found"))
               (let ((fm-end (match-beginning 0)))
                 ;; Sanitize naddr value before insertion
                 (let ((naddr-value (nostr-publish--sanitize-yaml-value naddr)))
@@ -397,7 +394,7 @@ Updates or inserts image.hash and image.url within existing image block.
 Preserves all other frontmatter fields and image fields (file, alt, etc.).
 Marks buffer as modified and saves it.
 
-Signals error if frontmatter delimiters or image block not found.
+Signals `user-error' if frontmatter delimiters or image block not found.
 
 Atomic guarantee: Either all changes are applied and saved, or all
 changes are rolled back on error (via undo mechanism)."
@@ -411,16 +408,16 @@ changes are rolled back on error (via undo mechanism)."
 
             ;; Step 1: Locate frontmatter region
             (unless (re-search-forward "^---$" nil t)
-              (error "YAML frontmatter start delimiter not found"))
+              (user-error "YAML frontmatter start delimiter not found"))
             (let ((fm-start (point)))
               (unless (re-search-forward "^---$" nil t)
-                (error "YAML frontmatter end delimiter not found"))
+                (user-error "YAML frontmatter end delimiter not found"))
               (let ((fm-end (match-beginning 0)))
 
                 ;; Step 2: Check if image block exists
                 (goto-char fm-start)
                 (unless (re-search-forward "^image:$" fm-end t)
-                  (error "Image block not found in frontmatter"))
+                  (user-error "Image block not found in frontmatter"))
                 (let ((cover-line-end (point))
                       ;; Sanitize values before insertion (defense-in-depth)
                       (hash-value (nostr-publish--sanitize-yaml-value
@@ -518,31 +515,31 @@ CONTRACT:
   (interactive)
   ;; Step 1: Validate preview configuration
   (unless nostr-publish-preview-relay
-    (error "Preview relay not configured.  Set nostr-publish-preview-relay"))
+    (user-error "Preview relay not configured.  Set nostr-publish-preview-relay"))
   (unless nostr-publish-preview-bunker
-    (error "Preview bunker not configured.  Set nostr-publish-preview-bunker"))
+    (user-error "Preview bunker not configured.  Set nostr-publish-preview-bunker"))
   (unless nostr-publish-preview-reader
-    (error "Preview reader not configured.  Set nostr-publish-preview-reader"))
+    (user-error "Preview reader not configured.  Set nostr-publish-preview-reader"))
 
   ;; Step 2: Validate buffer has file
   (let ((file (buffer-file-name)))
     (unless file
-      (error "Buffer has no file.  Save buffer before previewing"))
+      (user-error "Buffer has no file.  Save buffer before previewing"))
 
     ;; Validate preview relay URL
     (unless (string-match-p "\\`wss?://" nostr-publish-preview-relay)
-      (error "Invalid preview relay URL '%s': must use ws:// or wss://" nostr-publish-preview-relay))
+      (user-error "Invalid preview relay URL '%s': must use ws:// or wss://" nostr-publish-preview-relay))
 
     ;; Validate preview reader URL (must be http:// or https://)
     (unless (string-match-p "\\`https?://" nostr-publish-preview-reader)
-      (error "Invalid preview reader URL '%s': must use http:// or https://" nostr-publish-preview-reader))
+      (user-error "Invalid preview reader URL '%s': must use http:// or https://" nostr-publish-preview-reader))
 
     ;; Step 3: Save buffer if modified
     (when (buffer-modified-p)
       (save-buffer))
 
     ;; Step 4: Build CLI command arguments for preview
-    (let ((args (list nostr-publish-cli-command file)))
+    (let ((args (list (nostr-publish--resolve-cli-command) file)))
       (setq args (append args (list "--bunker" nostr-publish-preview-bunker)))
       (setq args (append args (list "--relay" nostr-publish-preview-relay)))
       (setq args (append args (list "--timeout" (number-to-string nostr-publish-timeout))))

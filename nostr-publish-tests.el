@@ -24,6 +24,16 @@
 (require 'ert)
 (require 'nostr-publish)
 
+;; Test portability: use a known executable command so tests do not depend on
+;; local `nostr-publish` installation.
+(defconst nostr-publish-tests-cli-command
+  (or (executable-find "emacs")
+      (executable-find "sh")
+      "sh")
+  "Executable command used by tests to satisfy CLI presence checks.")
+
+(setq nostr-publish-cli-command nostr-publish-tests-cli-command)
+
 ;; Helper to create a temporary test buffer with file
 (defun nostr-publish--make-test-buffer (name content &optional modified)
   "Create a test buffer named NAME with CONTENT.
@@ -48,13 +58,43 @@ Returns the buffer."
         (ignore-errors (delete-file file))))))
 
 (ert-deftest nostr-publish-buffer-requires-file-association ()
-  "Buffer without associated file should raise error."
+  "Buffer without associated file should raise user-error."
   (let ((buf (get-buffer-create "*test-no-file*")))
     (unwind-protect
         (with-current-buffer buf
           (should-error (nostr-publish-buffer)
-                        :type 'error))
+                        :type 'user-error))
       (nostr-publish--cleanup-buffer buf))))
+
+(ert-deftest nostr-publish-buffer-requires-installed-cli ()
+  "Publish should raise user-error when CLI executable is missing."
+  (let ((buf (nostr-publish--make-test-buffer
+              "*test-missing-cli*"
+              "# Test\nContent"))
+        (nostr-publish-default-relays '("wss://relay.example.com"))
+        (nostr-publish-cli-command "nostr-publish-definitely-missing"))
+    (unwind-protect
+        (with-current-buffer buf
+          (should-error (nostr-publish-buffer)
+                        :type 'user-error))
+      (nostr-publish--cleanup-buffer buf))))
+
+(ert-deftest nostr-publish-resolve-cli-command-returns-command-when-found ()
+  "CLI command helper should return configured command when executable exists."
+  (let ((nostr-publish-cli-command "nostr-publish-custom"))
+    (cl-letf (((symbol-function 'executable-find)
+               (lambda (cmd)
+                 (when (string= cmd "nostr-publish-custom")
+                   "/mock/path/nostr-publish-custom"))))
+      (should (string= (nostr-publish--resolve-cli-command) "nostr-publish-custom")))))
+
+(ert-deftest nostr-publish-resolve-cli-command-signals-user-error-when-missing ()
+  "CLI command helper should signal user-error when executable is missing."
+  (let ((nostr-publish-cli-command "nostr-publish-definitely-missing"))
+    (cl-letf (((symbol-function 'executable-find)
+               (lambda (_cmd) nil)))
+      (should-error (nostr-publish--resolve-cli-command)
+                    :type 'user-error))))
 
 (ert-deftest nostr-publish-buffer-auto-saves-modified ()
   "Buffer should be auto-saved if modified."
@@ -205,7 +245,7 @@ Returns the buffer."
                          0)))  ; Return exit code 0
               (nostr-publish-buffer)
               ;; Verify call-process received correct command
-              (should (string= captured-command "nostr-publish"))
+              (should (string= captured-command nostr-publish-tests-cli-command))
               ;; Verify args include file, bunker, relay, timeout
               (should (member "--bunker" captured-args))
               (should (member "bunker://test" captured-args))
@@ -377,7 +417,7 @@ Returns the buffer."
       (nostr-publish--cleanup-buffer buf))))
 
 (ert-deftest nostr-publish-update-cover-frontmatter-errors-no-start-delimiter ()
-  "Should signal error when frontmatter start delimiter missing."
+  "Should signal user-error when frontmatter start delimiter missing."
   (let ((buf (get-buffer-create "*test-no-start*")))
     (unwind-protect
         (with-current-buffer buf
@@ -387,11 +427,11 @@ Returns the buffer."
           (should-error
            (nostr-publish--update-cover-frontmatter
             '((hash . "x") (url . "https://x.com/x.jpg")))
-           :type 'error))
+           :type 'user-error))
       (nostr-publish--cleanup-buffer buf))))
 
 (ert-deftest nostr-publish-update-cover-frontmatter-errors-no-end-delimiter ()
-  "Should signal error when frontmatter end delimiter missing."
+  "Should signal user-error when frontmatter end delimiter missing."
   (let ((buf (get-buffer-create "*test-no-end*")))
     (unwind-protect
         (with-current-buffer buf
@@ -403,11 +443,11 @@ Returns the buffer."
           (should-error
            (nostr-publish--update-cover-frontmatter
             '((hash . "x") (url . "https://x.com/x.jpg")))
-           :type 'error))
+           :type 'user-error))
       (nostr-publish--cleanup-buffer buf))))
 
 (ert-deftest nostr-publish-update-cover-frontmatter-errors-no-cover-block ()
-  "Should signal error when cover block not found."
+  "Should signal user-error when cover block not found."
   (let ((buf (get-buffer-create "*test-no-cover*")))
     (unwind-protect
         (with-current-buffer buf
@@ -419,7 +459,7 @@ Returns the buffer."
           (should-error
            (nostr-publish--update-cover-frontmatter
             '((hash . "x") (url . "https://x.com/x.jpg")))
-           :type 'error))
+           :type 'user-error))
       (nostr-publish--cleanup-buffer buf))))
 
 (ert-deftest nostr-publish-update-cover-frontmatter-marks-modified ()
@@ -939,7 +979,7 @@ Returns the buffer."
       (nostr-publish--cleanup-buffer buf))))
 
 (ert-deftest nostr-publish-update-naddr-frontmatter-errors-no-start-delimiter ()
-  "Should signal error when frontmatter start delimiter missing."
+  "Should signal user-error when frontmatter start delimiter missing."
   (let ((buf (get-buffer-create "*test-naddr-no-start*")))
     (unwind-protect
         (with-current-buffer buf
@@ -948,11 +988,11 @@ Returns the buffer."
           (set-visited-file-name (make-temp-file "naddr-test-" nil ".md") t)
           (should-error
            (nostr-publish--update-naddr-frontmatter "naddr1test")
-           :type 'error))
+           :type 'user-error))
       (nostr-publish--cleanup-buffer buf))))
 
 (ert-deftest nostr-publish-update-naddr-frontmatter-errors-no-end-delimiter ()
-  "Should signal error when frontmatter end delimiter missing."
+  "Should signal user-error when frontmatter end delimiter missing."
   (let ((buf (get-buffer-create "*test-naddr-no-end*")))
     (unwind-protect
         (with-current-buffer buf
@@ -962,7 +1002,7 @@ Returns the buffer."
           (set-visited-file-name (make-temp-file "naddr-test-" nil ".md") t)
           (should-error
            (nostr-publish--update-naddr-frontmatter "naddr1test")
-           :type 'error))
+           :type 'user-error))
       (nostr-publish--cleanup-buffer buf))))
 
 (ert-deftest nostr-publish-update-naddr-frontmatter-marks-modified ()
@@ -1088,7 +1128,7 @@ Returns the buffer."
     (unwind-protect
         (with-current-buffer buf
           (should-error (nostr-publish-preview-buffer)
-                        :type 'error))
+                        :type 'user-error))
       (nostr-publish--cleanup-buffer buf))))
 
 (ert-deftest nostr-publish-preview-requires-preview-bunker ()
@@ -1102,7 +1142,7 @@ Returns the buffer."
     (unwind-protect
         (with-current-buffer buf
           (should-error (nostr-publish-preview-buffer)
-                        :type 'error))
+                        :type 'user-error))
       (nostr-publish--cleanup-buffer buf))))
 
 (ert-deftest nostr-publish-preview-requires-preview-reader ()
@@ -1116,7 +1156,7 @@ Returns the buffer."
     (unwind-protect
         (with-current-buffer buf
           (should-error (nostr-publish-preview-buffer)
-                        :type 'error))
+                        :type 'user-error))
       (nostr-publish--cleanup-buffer buf))))
 
 (ert-deftest nostr-publish-preview-requires-file-association ()
@@ -1129,8 +1169,23 @@ Returns the buffer."
         (with-current-buffer buf
           (insert "# Test\nContent")
           (should-error (nostr-publish-preview-buffer)
-                        :type 'error))
+                        :type 'user-error))
       (kill-buffer buf))))
+
+(ert-deftest nostr-publish-preview-requires-installed-cli ()
+  "Preview should raise user-error when CLI executable is missing."
+  (let ((buf (nostr-publish--make-test-buffer
+              "*test-preview-missing-cli*"
+              "# Test\nContent"))
+        (nostr-publish-preview-relay "wss://preview.relay.com")
+        (nostr-publish-preview-bunker "bunker://test")
+        (nostr-publish-preview-reader "https://preview.example.com")
+        (nostr-publish-cli-command "nostr-publish-definitely-missing"))
+    (unwind-protect
+        (with-current-buffer buf
+          (should-error (nostr-publish-preview-buffer)
+                        :type 'user-error))
+      (nostr-publish--cleanup-buffer buf))))
 
 (ert-deftest nostr-publish-preview-validates-relay-url ()
   "Preview should reject invalid relay URLs."
@@ -1143,7 +1198,7 @@ Returns the buffer."
     (unwind-protect
         (with-current-buffer buf
           (should-error (nostr-publish-preview-buffer)
-                        :type 'error))
+                        :type 'user-error))
       (nostr-publish--cleanup-buffer buf))))
 
 (ert-deftest nostr-publish-preview-validates-reader-url ()
@@ -1157,7 +1212,7 @@ Returns the buffer."
     (unwind-protect
         (with-current-buffer buf
           (should-error (nostr-publish-preview-buffer)
-                        :type 'error))
+                        :type 'user-error))
       (nostr-publish--cleanup-buffer buf))))
 
 (ert-deftest nostr-publish-preview-accepts-https-reader ()
@@ -1570,7 +1625,7 @@ Returns the buffer."
                      (lambda (args) (setq captured-args args))))
             (nostr-publish-preview-buffer)
             ;; Verify all components present
-            (should (string= (car captured-args) "nostr-publish"))
+            (should (string= (car captured-args) nostr-publish-tests-cli-command))
             (should (member "--bunker" captured-args))
             (should (member "bunker://preview-pubkey" captured-args))
             (should (member "--relay" captured-args))

@@ -70,10 +70,10 @@ Returns the file path. File is registered for cleanup."
   (setq test-emacs-e2e--temp-files nil))
 
 (defun test-emacs-e2e--get-env (name)
-  "Get required environment variable NAME or signal error."
+  "Get required environment variable NAME or signal user-error."
   (let ((value (getenv name)))
     (unless value
-      (error "Required environment variable %s not set" name))
+      (user-error "Required environment variable %s not set" name))
     value))
 
 ;;; Test Cases
