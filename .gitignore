@@ -52,6 +52,5 @@ baseline_output.txt
 # nostr-publish cache (processed cover images)
 .nostr-publish/
 
-# Local test stack (generated files)
+# Local test stack
 .env
-tests/integration/blossom-config.yml

@@ -4,7 +4,6 @@ export
 
 # Default values (used if .env not present)
 NOSTR_PUBLISH_RELAY_PORT ?= 8080
-NOSTR_PUBLISH_BLOSSOM_PORT ?= 3000
 
 .PHONY: help sync sync-dev install build publish publish-test test test-unit test-e2e test-emacs test-emacs-compile test-emacs-unit \
         test-emacs-lint test-emacs-checkdoc lint format format-md clean clean-emacs install-hooks version-patch version-minor version-major stack-up stack-down
@@ -65,7 +64,6 @@ test-emacs-checkdoc: ## Run checkdoc on Emacs Lisp files
 		--eval "(progn (setq checkdoc-spellcheck-documentation-flag nil) (checkdoc-file \"nostr-publish.el\"))"
 
 stack-up: ## Start local test stack (relay + signer + blossom + njump)
-	@NOSTR_PUBLISH_BLOSSOM_PORT=$(NOSTR_PUBLISH_BLOSSOM_PORT) envsubst < tests/integration/blossom-config.yml.template > tests/integration/blossom-config.yml
 	docker compose -f tests/integration/docker-compose.yml up -d
 
 stack-down: ## Stop local test stack and remove volumes

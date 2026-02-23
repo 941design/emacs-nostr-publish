@@ -14,10 +14,9 @@ For local stack setup and credentials, see [local-setup.md](local-setup.md).
 
 Integration tests read port configuration from environment variables:
 
-| Variable                     | Default | Description       |
-|------------------------------|---------|-------------------|
-| `NOSTR_PUBLISH_RELAY_PORT`   | 8080    | Relay host port   |
-| `NOSTR_PUBLISH_BLOSSOM_PORT` | 3000    | Blossom host port |
+| Variable                   | Default | Description     |
+|----------------------------|---------|-----------------|
+| `NOSTR_PUBLISH_RELAY_PORT` | 8080    | Relay host port |
 
 These are loaded from `.env` file (if present) via `python-dotenv`, allowing tests to work regardless of invocation method (`make` vs `pytest` directly).
 

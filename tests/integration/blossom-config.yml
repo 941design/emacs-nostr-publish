@@ -2,12 +2,9 @@
 #
 # Minimal configuration for testing cover image upload workflow.
 # Uses NIP-46 (bunker) authentication for uploads.
-#
-# NOTE: This is a template. The actual blossom-config.yml is generated
-# by `make stack-up` using envsubst.
 
 # Override the domain for blob URLs to be accessible from host
-publicDomain: "http://localhost:${NOSTR_PUBLISH_BLOSSOM_PORT}"
+publicDomain: "http://localhost:3000"
 
 databasePath: data/sqlite.db
 

@@ -3,7 +3,7 @@
 ;; Copyright (C) 2026 Markus Rother
 
 ;; Author: Markus Rother <mail@markusrother.de>
-;; Version: 0.2.0
+;; Version: 0.2.1
 ;; Package-Requires: ((emacs "27.1"))
 ;; Keywords: comm, text
 ;; URL: https://github.com/941design/emacs-nostr-publish

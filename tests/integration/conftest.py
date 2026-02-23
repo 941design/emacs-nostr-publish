@@ -6,7 +6,6 @@ IMPORTANT: Port Configuration
 -----------------------------
 Integration tests read port configuration from environment variables:
 - NOSTR_PUBLISH_RELAY_PORT (default: 8080)
-- NOSTR_PUBLISH_BLOSSOM_PORT (default: 3000)
 
 These are loaded from .env file (if present) via python-dotenv.
 This allows tests to work regardless of invocation method (make vs pytest directly).
@@ -34,12 +33,11 @@ load_dotenv()
 
 # Port configuration from environment (with defaults matching .env.example)
 RELAY_PORT = os.environ.get("NOSTR_PUBLISH_RELAY_PORT", "8080")
-BLOSSOM_PORT = os.environ.get("NOSTR_PUBLISH_BLOSSOM_PORT", "3000")
 
 # Derived URLs
 DOCKER_COMPOSE_FILE = Path(__file__).parent / "docker-compose.yml"
 RELAY_URL = f"ws://localhost:{RELAY_PORT}"
-BLOSSOM_URL = f"http://localhost:{BLOSSOM_PORT}"
+BLOSSOM_URL = "http://localhost:3000"
 
 # nak bunker with secret key '1'
 BUNKER_PUBKEY = "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798"

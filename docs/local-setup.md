@@ -8,7 +8,7 @@ Complete guide for setting up nostr-publish from source and running against a lo
 - **Docker and Docker Compose** for local relay and signer
 - **[nak](https://github.com/fiatjaf/nak)** CLI tool (v0.17.4+)
 - **Emacs 27.1+** (for Emacs integration)
-- **envsubst** (typically included with `gettext` package)
+
 
 ## Install from Source
 
@@ -44,11 +44,10 @@ cp .env.example .env
 
 Available variables (with defaults):
 
-| Variable                     | Default | Description          |
-|------------------------------|---------|----------------------|
-| `NOSTR_PUBLISH_RELAY_PORT`   | 8080    | Relay WebSocket port |
-| `NOSTR_PUBLISH_BLOSSOM_PORT` | 3000    | Blossom HTTP port    |
-| `NOSTR_PUBLISH_NJUMP_PORT`   | 2999    | njump preview reader |
+| Variable                   | Default | Description          |
+|----------------------------|---------|----------------------|
+| `NOSTR_PUBLISH_RELAY_PORT` | 8080    | Relay WebSocket port |
+| `NOSTR_PUBLISH_NJUMP_PORT` | 2999    | njump preview reader |
 
 The Makefile and test suite automatically load these values.
 
@@ -61,7 +60,7 @@ make stack-up
 This starts:
 - **nostr-rs-relay** on `ws://localhost:${NOSTR_PUBLISH_RELAY_PORT}` (default: 8080)
 - **nak bunker** - NIP-46 remote signer with test keys
-- **blossom** on `http://localhost:${NOSTR_PUBLISH_BLOSSOM_PORT}` (default: 3000)
+- **blossom** on `http://localhost:3000`
 - **njump** on `http://localhost:${NOSTR_PUBLISH_NJUMP_PORT}` (default: 2999) - preview reader
 
 ### Test Stack Credentials
