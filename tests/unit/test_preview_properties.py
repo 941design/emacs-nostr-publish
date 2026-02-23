@@ -7,6 +7,8 @@ Tests properties that secure the preview feature:
 - naddr encoding with relay hints
 """
 
+from unittest.mock import MagicMock, patch
+
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
@@ -304,12 +306,35 @@ class TestNaddrEncodingWithPreview:
     Relay hints are added at the Emacs layer when constructing the reader URL.
     """
 
+    @staticmethod
+    def _mock_popen():
+        """Create a patch for subprocess.Popen that returns a fake naddr."""
+        mock_process = MagicMock()
+        mock_process.communicate.return_value = ("naddr1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq", "")
+        mock_process.returncode = 0
+        return patch("subprocess.Popen", return_value=mock_process)
+
+    @staticmethod
+    def _assert_nak_command(mock_popen, pubkey, slug, call_count):
+        """Assert subprocess was invoked with expected nak encode command args."""
+        assert mock_popen.call_count == call_count
+
+        for call in mock_popen.call_args_list:
+            cmd = call.args[0]
+            kwargs = call.kwargs
+
+            assert cmd == ["nak", "encode", "naddr", "--kind", "30023", "--identifier", slug, "--pubkey", pubkey]
+            assert kwargs["text"] is True
+
     def test_naddr_valid_format(self):
         """naddr encoding produces valid NIP-19 format."""
         pubkey = "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798"
         slug = "preview-test-article"
 
-        naddr = encode_naddr(pubkey=pubkey, slug=slug)
+        with self._mock_popen() as mock_popen:
+            naddr = encode_naddr(pubkey=pubkey, slug=slug)
+
+        self._assert_nak_command(mock_popen, pubkey, slug, call_count=1)
 
         # The naddr should have correct prefix and reasonable length
         assert naddr.startswith("naddr1")
@@ -320,8 +345,11 @@ class TestNaddrEncodingWithPreview:
         pubkey = "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798"
         slug = "preview-test"
 
-        naddr1 = encode_naddr(pubkey=pubkey, slug=slug)
-        naddr2 = encode_naddr(pubkey=pubkey, slug=slug)
+        with self._mock_popen() as mock_popen:
+            naddr1 = encode_naddr(pubkey=pubkey, slug=slug)
+            naddr2 = encode_naddr(pubkey=pubkey, slug=slug)
+
+        self._assert_nak_command(mock_popen, pubkey, slug, call_count=2)
 
         assert naddr1 == naddr2
 
@@ -337,8 +365,11 @@ class TestNaddrEncodingWithPreview:
         """naddr encoding is deterministic for any valid slug."""
         pubkey = "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798"
 
-        naddr1 = encode_naddr(pubkey=pubkey, slug=slug)
-        naddr2 = encode_naddr(pubkey=pubkey, slug=slug)
+        with self._mock_popen() as mock_popen:
+            naddr1 = encode_naddr(pubkey=pubkey, slug=slug)
+            naddr2 = encode_naddr(pubkey=pubkey, slug=slug)
+
+        self._assert_nak_command(mock_popen, pubkey, slug, call_count=2)
 
         assert naddr1 == naddr2
         assert naddr1.startswith("naddr1")
